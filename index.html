@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f5f7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="STUD">
+  <title>STUD — Personal Study Dashboard & Course Vault</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230071e3'/><text x='50' y='68' font-family='-apple-system, sans-serif' font-size='56' font-weight='800' fill='white' text-anchor='middle'>S</text></svg>">
+  <link rel="stylesheet" href="style.css">
+  <!-- Google Identity Services for Google Drive Integration -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <!-- Mobile Top Bar (Apple Frosted Glass) -->
+  <header class="mobile-top-bar">
+    <a class="brand" href="#dashboard">STUD<span>.</span></a>
+    <div class="mobile-top-actions">
+      <button id="mobile-gdrive-btn" class="apple-btn-secondary-sm" title="Google Drive Cloud">☁️ Drive</button>
+      <button id="mobile-history-btn" class="apple-btn-secondary-sm" title="Session History">≡ History</button>
+      <button id="mobile-backup" class="apple-btn-secondary-sm" title="Data & Sync">⇅ Sync</button>
+    </div>
+  </header>
+
+  <!-- Desktop Sidebar (macOS-style Translucent Bar) -->
+  <aside>
+    <a class="brand" href="#dashboard">STUD<span>.</span></a>
+    <p class="tagline">Personal study space.</p>
+    
+    <nav class="sidebar-nav">
+      <a href="#dashboard" class="nav-item active" data-page="dashboard"><span class="sf-icon">◫</span> Overview</a>
+      <a href="#logger" class="nav-item" data-page="logger"><span class="sf-icon">⏱</span> Log Time</a>
+      <a href="#calendar" class="nav-item" data-page="calendar"><span class="sf-icon">📅</span> Calendar</a>
+      <a href="#files" class="nav-item" data-page="files"><span class="sf-icon">📂</span> Files & Cours</a>
+      <a href="#tasks" class="nav-item" data-page="tasks"><span class="sf-icon">✓</span> Study Plan</a>
+      <a href="#history" class="nav-item" data-page="history"><span class="sf-icon">≡</span> History</a>
+    </nav>
+
+    <div class="aside-bottom">
+      <!-- Google Drive Connection Pill in Sidebar -->
+      <div id="sidebar-gdrive-box" class="sidebar-gdrive-box">
+        <button type="button" id="btn-sidebar-gdrive" class="apple-gdrive-btn">
+          <span class="gdrive-icon">☁️</span> Google Drive
+        </button>
+      </div>
+
+      <div class="aside-status"><span class="dot"></span> Local Storage Active</div>
+      <p>Data & files are stored securely on this device.<br>Back up to sync across PC & phone.</p>
+      <div class="aside-actions">
+        <button id="export" class="quiet-btn-apple">↓ Export backup</button>
+        <label class="quiet-btn-apple import">↑ Restore backup<input id="import" type="file" accept="application/json" hidden></label>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content Area with Distinct Pages -->
+  <main>
+
+    <!-- ========================================================
+         PAGE 1: OVERVIEW / DASHBOARD (#view-dashboard)
+    ======================================================== -->
+    <section class="page-view active" id="view-dashboard">
+      <header class="page-header">
+        <div>
+          <div class="eyebrow" id="date"></div>
+          <h1>Study Dashboard<span>.</span></h1>
+          <p class="header-subtitle">Your progress, streak, and subject breakdown.</p>
+        </div>
+        <div class="header-actions">
+          <button id="add-semester" class="apple-btn-secondary">+ Add semester</button>
+          <button id="add-subject" class="apple-btn-primary">+ Add subject</button>
+        </div>
+      </header>
+
+      <!-- Apple Metrics Banner -->
+      <section class="stats">
+        <article class="stat-card">
+          <span class="stat-label">STUDIED TODAY</span>
+          <strong id="today" class="stat-value">0m</strong>
+          <small class="stat-desc">Daily focus total</small>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">THIS WEEK</span>
+          <strong id="week" class="stat-value">0m</strong>
+          <small class="stat-desc">Monday – Sunday</small>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">STUDY STREAK</span>
+          <strong id="streak" class="stat-value">0 days</strong>
+          <small class="stat-desc">Keep showing up</small>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">TASKS COMPLETED</span>
+          <strong id="completed" class="stat-value">0 / 0</strong>
+          <small class="stat-desc">Study plan progress</small>
+        </article>
+      </section>
+
+      <div class="grid">
+        <!-- Weekly Activity Chart -->
+        <section class="card activity-card">
+          <div class="section-top">
+            <div>
+              <h2>Weekly Activity</h2>
+              <p class="section-subtitle">Minutes studied per day</p>
+            </div>
+            <a href="#calendar" class="apple-link-btn">Full Calendar ↗</a>
+          </div>
+          <div id="chart" class="chart"></div>
+          <div class="goal-section">
+            <div class="goal-header">
+              <h3>Weekly Goal</h3>
+              <button id="edit-goal" class="apple-link-btn">Edit Goal ↗</button>
+            </div>
+            <p id="goal-text" class="goal-text"></p>
+            <div class="progress-bar-wrap">
+              <div id="goal-bar-fill" class="progress-bar-fill" style="width:0%"></div>
+            </div>
+            <small id="goal-caption" class="goal-caption"></small>
+          </div>
+        </section>
+
+        <!-- Quick Log Time Teaser -->
+        <section class="card quick-action-card">
+          <div class="section-top">
+            <div>
+              <h2>Log Study Time</h2>
+              <p class="section-subtitle">Record sessions with the interactive scrubber</p>
+            </div>
+            <a href="#logger" class="apple-btn-primary-sm">Open Logger →</a>
+          </div>
+          <div class="quick-log-banner">
+            <div class="quick-log-info">
+              <span class="quick-log-badge">TODAY'S TOTAL</span>
+              <strong id="dashboard-today-hours" class="quick-log-number">0m</strong>
+              <p>Type your hours or drag the scrubber to log time anytime.</p>
+            </div>
+            <a href="#logger" class="apple-btn-secondary" style="margin-top:12px;display:inline-block">⏱ Log a Session Now</a>
+          </div>
+        </section>
+
+        <!-- Subject Breakdown by Semester -->
+        <section class="card subjects-card" id="subjects-card">
+          <div class="section-top">
+            <div>
+              <h2>Subject Breakdown</h2>
+              <p class="section-subtitle">Organized by semester</p>
+            </div>
+            <span class="muted" id="subject-filter-label">All semesters</span>
+          </div>
+          <div id="semester-tabs" class="semester-tabs"></div>
+          <div id="subject-list" class="subject-list"></div>
+        </section>
+
+        <!-- Course Files Preview Card -->
+        <section class="card files-preview-card">
+          <div class="section-top">
+            <div>
+              <h2>Course Files & Documents</h2>
+              <p class="section-subtitle">Vault for Cours, TP, and TD</p>
+            </div>
+            <a href="#files" class="apple-link-btn">View All Files ↗</a>
+          </div>
+          <div id="dashboard-files-list" class="files-mini-list"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         PAGE 2: LOG STUDY TIME (#view-logger)
+    ======================================================== -->
+    <section class="page-view" id="view-logger">
+      <header class="page-header">
+        <div>
+          <div class="eyebrow">STUDY TIME TRACKER</div>
+          <h1>Log Study Time<span>.</span></h1>
+          <p class="header-subtitle">Type your duration directly or slide the interactive scrubber.</p>
+        </div>
+      </header>
+
+      <div class="page-content-narrow">
+        <section class="card time-logger-card">
+          <!-- Subject Picker -->
+          <div class="form-group">
+            <label for="entry-subject" class="apple-label">SUBJECT</label>
+            <select id="entry-subject" class="apple-select" aria-label="Select subject to log"></select>
+          </div>
+
+          <!-- Creative Scrubber & Dual-Input Dial -->
+          <div class="time-scrubber-card">
+            <div class="scrubber-header">
+              <span class="scrubber-title">SESSION DURATION</span>
+              <span class="duration-badge" id="duration-badge">1h 30m</span>
+            </div>
+
+            <!-- Dual Type Inputs (Hours & Minutes) -->
+            <div class="time-input-row">
+              <button type="button" class="stepper-btn" id="time-step-down" aria-label="Subtract 15 minutes" title="-15 minutes">−15m</button>
+              
+              <div class="time-boxes" id="time-boxes" title="Type duration or scroll with mouse/trackpad">
+                <div class="time-box">
+                  <input type="number" id="time-hours" min="0" max="24" value="1" aria-label="Hours studied">
+                  <span class="unit-tag">hr</span>
+                </div>
+                <span class="time-separator">:</span>
+                <div class="time-box">
+                  <input type="number" id="time-minutes" min="0" max="59" step="5" value="30" aria-label="Minutes studied">
+                  <span class="unit-tag">min</span>
+                </div>
+              </div>
+
+              <button type="button" class="stepper-btn" id="time-step-up" aria-label="Add 15 minutes" title="+15 minutes">+15m</button>
+            </div>
+
+            <!-- Custom Apple Range Scrubber Bar -->
+            <div class="slider-container">
+              <input type="range" id="time-slider" min="5" max="480" step="5" value="90" class="apple-range-slider" aria-label="Study duration slider">
+              <div class="slider-ruler" id="slider-ruler">
+                <span data-set-min="30">30m</span>
+                <span data-set-min="60">1h</span>
+                <span data-set-min="90">1h30</span>
+                <span data-set-min="120">2h</span>
+                <span data-set-min="180">3h</span>
+                <span data-set-min="240">4h</span>
+                <span data-set-min="360">6h</span>
+                <span data-set-min="480">8h</span>
+              </div>
+            </div>
+
+            <!-- Apple Quick Duration Chips -->
+            <div class="preset-chips" id="preset-chips">
+              <button type="button" class="chip" data-min="25">25m</button>
+              <button type="button" class="chip" data-min="45">45m</button>
+              <button type="button" class="chip" data-min="60">1h</button>
+              <button type="button" class="chip active" data-min="90">1h 30m</button>
+              <button type="button" class="chip" data-min="120">2h</button>
+              <button type="button" class="chip" data-min="180">3h</button>
+            </div>
+          </div>
+
+          <!-- Date Selection (Apple Segmented Control) -->
+          <div class="form-group">
+            <label class="apple-label">STUDY DATE</label>
+            <div class="segmented-control" id="date-segmented">
+              <button type="button" class="segment-btn active" data-date="today">Today</button>
+              <button type="button" class="segment-btn" data-date="yesterday">Yesterday</button>
+              <button type="button" class="segment-btn" data-date="custom">Custom Date</button>
+            </div>
+            <input type="date" id="entry-custom-date" class="apple-date-input" style="display:none;" aria-label="Custom study date">
+          </div>
+
+          <!-- Optional Session Note -->
+          <div class="form-group">
+            <label for="entry-note" class="apple-label">NOTE (OPTIONAL)</label>
+            <input type="text" id="entry-note" class="apple-input" placeholder="e.g. Chapter 4 exercises, TP 2..." maxlength="120">
+          </div>
+
+          <!-- Submit Button -->
+          <button type="button" id="btn-save-session" class="apple-primary-btn">
+            Log Study Session
+          </button>
+        </section>
+
+        <!-- Sessions Logged Today List -->
+        <section class="card" style="margin-top:20px">
+          <div class="section-top">
+            <div>
+              <h2>Sessions Logged Today</h2>
+              <p class="section-subtitle">Review or undo recent records</p>
+            </div>
+          </div>
+          <div id="today-sessions-list"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         PAGE 3: CALENDAR (#view-calendar)
+    ======================================================== -->
+    <section class="page-view" id="view-calendar">
+      <header class="page-header">
+        <div>
+          <div class="eyebrow">MONTHLY CALENDAR</div>
+          <h1>Study Calendar<span>.</span></h1>
+          <p class="header-subtitle">Visualize your daily study volume and upcoming deadlines.</p>
+        </div>
+        <div class="header-actions">
+          <button id="cal-today-btn" class="apple-btn-secondary">Today</button>
+        </div>
+      </header>
+
+      <div class="calendar-layout">
+        <!-- Calendar Main Grid Card -->
+        <div class="card calendar-card">
+          <!-- Calendar Navigation Header -->
+          <div class="calendar-nav-bar">
+            <div class="calendar-nav-controls">
+              <button type="button" class="cal-nav-btn" id="cal-prev" aria-label="Previous month">‹</button>
+              <h2 id="cal-month-title" class="cal-title">Month 2026</h2>
+              <button type="button" class="cal-nav-btn" id="cal-next" aria-label="Next month">›</button>
+            </div>
+            <div class="cal-month-stats" id="cal-month-stats">0 study days · 0m total</div>
+          </div>
+
+          <!-- Weekday Labels -->
+          <div class="calendar-weekdays">
+            <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+          </div>
+
+          <!-- 7x5 or 7x6 Day Cells Grid -->
+          <div class="calendar-grid" id="calendar-grid"></div>
+        </div>
+
+        <!-- Selected Day Inspector Sheet -->
+        <div class="card day-inspector-card">
+          <div class="section-top">
+            <div>
+              <h3 id="inspector-date-title">Day Overview</h3>
+              <p class="section-subtitle" id="inspector-date-subtitle">Select any date on the calendar</p>
+            </div>
+          </div>
+          <div id="inspector-content">
+            <p class="muted">Click on a day in the calendar to see study sessions and due tasks.</p>
+          </div>
+          <div class="inspector-actions" id="inspector-actions" style="display:none;margin-top:16px;">
+            <button id="btn-log-for-date" class="apple-btn-primary" style="width:100%">+ Log Time for This Date</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         PAGE 4: COURSE FILES & VAULT (#view-files)
+    ======================================================== -->
+    <section class="page-view" id="view-files">
+      <header class="page-header">
+        <div>
+          <div class="eyebrow">DOCUMENTS & VAULT</div>
+          <h1>Course Files & Resources<span>.</span></h1>
+          <p class="header-subtitle">Store and share your Cours, TP, TD, and lecture materials.</p>
+        </div>
+        <div class="header-actions">
+          <button id="btn-gdrive-vault" class="apple-btn-secondary"><span class="gdrive-icon">☁️</span> Google Drive</button>
+          <button id="btn-open-upload" class="apple-btn-primary">+ Upload File</button>
+        </div>
+      </header>
+
+      <!-- Filter & Search Bar -->
+      <div class="files-control-bar">
+        <!-- Category Segmented Control -->
+        <div class="segmented-control" id="files-category-filter">
+          <button type="button" class="segment-btn active" data-cat="all">All Files</button>
+          <button type="button" class="segment-btn" data-cat="cours">Cours</button>
+          <button type="button" class="segment-btn" data-cat="tp">TP</button>
+          <button type="button" class="segment-btn" data-cat="td">TD</button>
+          <button type="button" class="segment-btn" data-cat="examen">Exams</button>
+          <button type="button" class="segment-btn" data-cat="autre">Other</button>
+        </div>
+
+        <!-- Subject Selector & Search -->
+        <div class="files-filter-row">
+          <select id="files-subject-filter" class="apple-select" aria-label="Filter files by subject"></select>
+          <input type="text" id="files-search" class="apple-input" placeholder="Search files by name..." aria-label="Search files">
+        </div>
+      </div>
+
+      <!-- File Cards Grid -->
+      <div id="files-grid" class="files-grid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- ========================================================
+         PAGE 5: STUDY PLAN / TASKS (#view-tasks)
+    ======================================================== -->
+    <section class="page-view" id="view-tasks">
+      <header class="page-header">
+        <div>
+          <div class="eyebrow">STUDY PLAN</div>
+          <h1>Study Plan & Tasks<span>.</span></h1>
+          <p class="header-subtitle">Manage assignments, deadlines, and revisions.</p>
+        </div>
+      </header>
+
+      <div class="page-content-narrow">
+        <!-- Add Task Card -->
+        <section class="card">
+          <div class="section-top">
+            <h2>Add New Task</h2>
+          </div>
+          <form id="task-form" class="task-form">
+            <input id="task-title" class="apple-input" placeholder="What do you need to study or deliver?" maxlength="180" required aria-label="Task title">
+            <div class="task-form-sub">
+              <select id="task-subject" class="apple-select" aria-label="Task subject (optional)"></select>
+              <input id="task-due" class="apple-input" type="date" aria-label="Due date">
+              <button class="apple-btn-primary" aria-label="Add task">+</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Task List Card -->
+        <section class="card" style="margin-top:20px">
+          <div class="section-top">
+            <div>
+              <h2>Tasks</h2>
+              <p class="section-subtitle">Click circle to complete</p>
+            </div>
+            <div class="segmented-control" id="task-filter-segmented">
+              <button type="button" class="segment-btn active" data-task-filter="all">All</button>
+              <button type="button" class="segment-btn" data-task-filter="todo">To Do</button>
+              <button type="button" class="segment-btn" data-task-filter="done">Done</button>
+            </div>
+          </div>
+          <div id="task-list" class="task-list"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         PAGE 6: SESSION HISTORY (#view-history)
+    ======================================================== -->
+    <section class="page-view" id="view-history">
+      <header class="page-header">
+        <div>
+          <div class="eyebrow">RECORDS</div>
+          <h1>Session History<span>.</span></h1>
+          <p class="header-subtitle">Complete log of all past study sessions.</p>
+        </div>
+      </header>
+
+      <div class="card history-card">
+        <div class="history-controls-row">
+          <select id="history-subject-filter" class="apple-select" aria-label="Filter history by subject"></select>
+          <span class="muted" id="history-total-label">Total logged: 0m</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>SUBJECT</th>
+                <th>DATE</th>
+                <th>DURATION</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="session-list"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      <span>STUD</span>
+      <span>Engineered for focused learning.</span>
+    </footer>
+  </main>
+
+  <!-- Mobile Bottom Navigation (iOS Tab Bar style) -->
+  <nav class="mobile-bottom-nav" aria-label="Mobile Navigation">
+    <a href="#dashboard" class="mobile-nav-item active" data-page="dashboard">
+      <span class="mobile-nav-icon">◫</span>
+      <span class="mobile-nav-label">Overview</span>
+    </a>
+    <a href="#logger" class="mobile-nav-item" data-page="logger">
+      <span class="mobile-nav-icon">⏱</span>
+      <span class="mobile-nav-label">Log</span>
+    </a>
+    <a href="#calendar" class="mobile-nav-item" data-page="calendar">
+      <span class="mobile-nav-icon">📅</span>
+      <span class="mobile-nav-label">Calendar</span>
+    </a>
+    <a href="#files" class="mobile-nav-item" data-page="files">
+      <span class="mobile-nav-icon">📂</span>
+      <span class="mobile-nav-label">Files</span>
+    </a>
+    <a href="#tasks" class="mobile-nav-item" data-page="tasks">
+      <span class="mobile-nav-icon">✓</span>
+      <span class="mobile-nav-label">Plan</span>
+    </a>
+  </nav>
+
+  <!-- File Upload Modal -->
+  <dialog id="upload-modal">
+    <form id="upload-form">
+      <h2>Upload Course Document</h2>
+      <p class="section-subtitle">Store PDFs, code files, slides, or TD sheets.</p>
+      
+      <div class="form-group" style="margin-top:16px">
+        <label class="apple-label">CHOOSE FILE</label>
+        <div class="drop-zone" id="file-drop-zone">
+          <span class="drop-icon">📄</span>
+          <span id="drop-zone-text">Click to choose or drag & drop a file</span>
+          <input type="file" id="upload-file-input" required hidden>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="upload-category" class="apple-label">DOCUMENT CATEGORY</label>
+        <select id="upload-category" class="apple-select" required>
+          <option value="cours">Cours (Lecture notes / slides)</option>
+          <option value="tp">TP (Travaux Pratiques / Lab code)</option>
+          <option value="td">TD (Travaux Dirigés / Exercises)</option>
+          <option value="examen">Examen (Past exams / tests)</option>
+          <option value="autre">Autre (Cheat sheets / resources)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="upload-subject" class="apple-label">SUBJECT</label>
+        <select id="upload-subject" class="apple-select" required></select>
+      </div>
+
+      <div class="form-group">
+        <label for="upload-name" class="apple-label">CUSTOM TITLE / NOTE (OPTIONAL)</label>
+        <input type="text" id="upload-name" class="apple-input" placeholder="e.g. Chapitre 2 - Merise & MCD">
+      </div>
+
+      <!-- Google Drive Cloud Option in Upload Modal -->
+      <div class="form-group" id="gdrive-upload-option-box">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--apple-blue);cursor:pointer">
+          <input type="checkbox" id="upload-to-gdrive-checkbox" checked style="accent-color:var(--apple-blue)">
+          <span>☁️ Also save copy to Google Drive ("STUD - Course Files")</span>
+        </label>
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" class="apple-btn-secondary" id="upload-cancel">Cancel</button>
+        <button type="submit" class="apple-btn-primary" id="btn-submit-upload">Save File</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Google Drive Setup & Cloud Sync Modal -->
+  <dialog id="gdrive-modal">
+    <div class="modal-inner">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h2>Google Drive Integration</h2>
+        <span class="apple-pill" id="gdrive-modal-status-badge">NOT CONNECTED</span>
+      </div>
+      <p class="section-subtitle">Save your course files, TP, TD, and automatic study backups directly into your Google Drive.</p>
+      
+      <div id="gdrive-auth-view" style="margin-top:16px">
+        <!-- Disconnected View: Enter Client ID & Sign In -->
+        <div id="gdrive-disconnected-box">
+          <div class="form-group">
+            <label for="gdrive-client-id-input" class="apple-label">GOOGLE CLOUD CLIENT ID</label>
+            <input type="text" id="gdrive-client-id-input" class="apple-input" placeholder="e.g. 123456789-abcdef.apps.googleusercontent.com">
+            <small class="muted" style="display:block;margin-top:6px;font-size:11px">
+              Stored only in your browser. Allows STUD to upload files to a private folder in your Drive.
+            </small>
+          </div>
+          
+          <details class="gdrive-instructions" style="margin-bottom:18px;font-size:12px;color:var(--text-secondary)">
+            <summary style="cursor:pointer;font-weight:600;color:var(--apple-blue);margin-bottom:8px">📖 Quick Setup Guide (Free, 2 minutes) ▾</summary>
+            <ol style="padding-left:18px;line-height:1.6;margin:6px 0">
+              <li>Open <a href="https://console.cloud.google.com/" target="_blank" class="apple-link-btn" style="display:inline;padding:0">Google Cloud Console</a> and create a project.</li>
+              <li>Go to <strong>APIs & Services → Library</strong> and enable <strong>Google Drive API</strong>.</li>
+              <li>Under <strong>OAuth consent screen</strong>, select <strong>External</strong> and enter your email.</li>
+              <li>Go to <strong>Credentials → Create Credentials → OAuth Client ID</strong> (select <em>Web application</em>).</li>
+              <li>Under <strong>Authorized JavaScript origins</strong>, add <code>http://localhost</code> and your Vercel URL (e.g. <code>https://*.vercel.app</code>).</li>
+              <li>Copy your <strong>Client ID</strong>, paste it above, and click Sign in!</li>
+            </ol>
+          </details>
+
+          <div class="dialog-actions">
+            <button type="button" class="apple-btn-secondary" id="gdrive-modal-close">Close</button>
+            <button type="button" class="apple-btn-primary" id="btn-gdrive-signin">
+              <span class="gdrive-icon">☁️</span> Sign in with Google
+            </button>
+          </div>
+        </div>
+
+        <!-- Connected View: Status & Sync Actions -->
+        <div id="gdrive-connected-box" style="display:none;">
+          <div class="gdrive-connected-card">
+            <div style="font-size:36px;margin-bottom:4px">☁️</div>
+            <strong style="font-size:16px;color:var(--text-primary)">Connected to Google Drive</strong>
+            <p class="muted" style="font-size:12px;margin:4px 0 16px">Your files and backups will save to the <code>STUD - Course Files</code> folder in your personal Drive.</p>
+            
+            <div style="display:grid;gap:10px;margin-bottom:18px">
+              <button type="button" class="apple-btn-primary" id="btn-gdrive-backup-now">☁️ Backup Study Data to Drive</button>
+              <button type="button" class="apple-btn-secondary" id="btn-gdrive-restore-now">☁️ Restore Data from Drive</button>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border-subtle);padding-top:14px">
+              <button type="button" class="quiet-btn-apple danger" id="btn-gdrive-disconnect" style="color:var(--apple-red)">Disconnect Google Drive</button>
+              <button type="button" class="apple-btn-secondary" id="gdrive-modal-close-connected">Done</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Reusable Modal Dialog (macOS Sheet Style) -->
+  <dialog id="modal">
+    <form id="modal-form">
+      <h2 id="modal-title"></h2>
+      <div id="modal-fields"></div>
+      <p id="form-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" class="apple-btn-secondary" id="cancel">Cancel</button>
+        <button class="apple-btn-primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Apple Toast Notification -->
+  <div id="toast" role="status"></div>
+</body>
+</html>
