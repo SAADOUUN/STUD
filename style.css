@@ -1960,6 +1960,81 @@ dialog input, dialog select {
 /* ============================================================
    GOOGLE DRIVE INTEGRATION STYLES
 ============================================================ */
+.sidebar-cloud-card {
+  background: #ffffff;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.cloud-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.cloud-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cloud-icon {
+  font-size: 20px;
+}
+
+.cloud-sync-status {
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+}
+
+.sync-dot, .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.sync-dot.synced, .dot.synced {
+  background: var(--apple-green);
+  box-shadow: 0 0 6px rgba(52, 199, 89, 0.5);
+}
+
+.sync-dot.syncing, .dot.syncing {
+  background: var(--apple-blue);
+  box-shadow: 0 0 6px rgba(0, 113, 227, 0.5);
+  animation: pulse 0.8s infinite alternate;
+}
+
+.sync-dot.disconnected, .dot.disconnected {
+  background: var(--text-tertiary);
+  box-shadow: none;
+}
+
+@keyframes pulse {
+  from { opacity: 0.3; }
+  to { opacity: 1; }
+}
+
+.cloud-status-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+
+.cloud-card-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .sidebar-gdrive-box {
   margin-bottom: 12px;
 }

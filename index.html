@@ -7,10 +7,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="STUD">
-  <title>STUD — Personal Study Dashboard & Course Vault</title>
+  <title>STUD — Cloud Study Dashboard</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230071e3'/><text x='50' y='68' font-family='-apple-system, sans-serif' font-size='56' font-weight='800' fill='white' text-anchor='middle'>S</text></svg>">
   <link rel="stylesheet" href="style.css">
-  <!-- Google Identity Services for Google Drive Integration -->
+  <!-- Google Identity Services for Direct Google Drive Sync -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -19,16 +19,17 @@
   <header class="mobile-top-bar">
     <a class="brand" href="#dashboard">STUD<span>.</span></a>
     <div class="mobile-top-actions">
-      <button id="mobile-gdrive-btn" class="apple-btn-secondary-sm" title="Google Drive Cloud">☁️ Drive</button>
+      <button id="mobile-cloud-btn" class="apple-btn-secondary-sm" title="Google Drive Cloud Sync">
+        <span id="mobile-cloud-dot" class="dot"></span> <span id="mobile-cloud-label">Drive</span>
+      </button>
       <button id="mobile-history-btn" class="apple-btn-secondary-sm" title="Session History">≡ History</button>
-      <button id="mobile-backup" class="apple-btn-secondary-sm" title="Data & Sync">⇅ Sync</button>
     </div>
   </header>
 
   <!-- Desktop Sidebar (macOS-style Translucent Bar) -->
   <aside>
     <a class="brand" href="#dashboard">STUD<span>.</span></a>
-    <p class="tagline">Personal study space.</p>
+    <p class="tagline">Cloud study dashboard.</p>
     
     <nav class="sidebar-nav">
       <a href="#dashboard" class="nav-item active" data-page="dashboard"><span class="sf-icon">◫</span> Overview</a>
@@ -39,19 +40,24 @@
       <a href="#history" class="nav-item" data-page="history"><span class="sf-icon">≡</span> History</a>
     </nav>
 
+    <!-- Google Drive Cloud Card (Replaces local storage controls) -->
     <div class="aside-bottom">
-      <!-- Google Drive Connection Pill in Sidebar -->
-      <div id="sidebar-gdrive-box" class="sidebar-gdrive-box">
-        <button type="button" id="btn-sidebar-gdrive" class="apple-gdrive-btn">
-          <span class="gdrive-icon">☁️</span> Google Drive
-        </button>
-      </div>
-
-      <div class="aside-status"><span class="dot"></span> Local Storage Active</div>
-      <p>Data & files are stored securely on this device.<br>Back up to sync across PC & phone.</p>
-      <div class="aside-actions">
-        <button id="export" class="quiet-btn-apple">↓ Export backup</button>
-        <label class="quiet-btn-apple import">↑ Restore backup<input id="import" type="file" accept="application/json" hidden></label>
+      <div id="sidebar-cloud-card" class="sidebar-cloud-card">
+        <div class="cloud-card-header">
+          <div class="cloud-title-group">
+            <span class="cloud-icon">☁️</span>
+            <div>
+              <strong id="cloud-status-title">Google Drive</strong>
+              <div id="cloud-sync-status" class="cloud-sync-status">Connecting...</div>
+            </div>
+          </div>
+        </div>
+        <p id="cloud-status-desc" class="cloud-status-desc">All files and study logs automatically save to your Google Drive.</p>
+        <div id="cloud-card-actions" class="cloud-card-actions">
+          <button type="button" id="btn-sidebar-connect" class="apple-btn-primary" style="width:100%;font-size:12px;padding:8px 12px">
+            Connect Google Drive
+          </button>
+        </div>
       </div>
     </div>
   </aside>
@@ -128,7 +134,7 @@
           <div class="section-top">
             <div>
               <h2>Log Study Time</h2>
-              <p class="section-subtitle">Record sessions with the interactive scrubber</p>
+              <p class="section-subtitle">Synced automatically to Google Drive</p>
             </div>
             <a href="#logger" class="apple-btn-primary-sm">Open Logger →</a>
           </div>
@@ -155,12 +161,12 @@
           <div id="subject-list" class="subject-list"></div>
         </section>
 
-        <!-- Course Files Preview Card -->
+        <!-- Course Files Preview Card (Google Drive Vault) -->
         <section class="card files-preview-card">
           <div class="section-top">
             <div>
-              <h2>Course Files & Documents</h2>
-              <p class="section-subtitle">Vault for Cours, TP, and TD</p>
+              <h2>Google Drive Documents</h2>
+              <p class="section-subtitle">Stored in "STUD - Course Files"</p>
             </div>
             <a href="#files" class="apple-link-btn">View All Files ↗</a>
           </div>
@@ -269,7 +275,7 @@
           <div class="section-top">
             <div>
               <h2>Sessions Logged Today</h2>
-              <p class="section-subtitle">Review or undo recent records</p>
+              <p class="section-subtitle">Auto-synced to Google Drive</p>
             </div>
           </div>
           <div id="today-sessions-list"></div>
@@ -338,13 +344,13 @@
     <section class="page-view" id="view-files">
       <header class="page-header">
         <div>
-          <div class="eyebrow">DOCUMENTS & VAULT</div>
+          <div class="eyebrow">GOOGLE DRIVE VAULT</div>
           <h1>Course Files & Resources<span>.</span></h1>
-          <p class="header-subtitle">Store and share your Cours, TP, TD, and lecture materials.</p>
+          <p class="header-subtitle">Stored and managed in your Google Drive ("STUD - Course Files").</p>
         </div>
         <div class="header-actions">
-          <button id="btn-gdrive-vault" class="apple-btn-secondary"><span class="gdrive-icon">☁️</span> Google Drive</button>
-          <button id="btn-open-upload" class="apple-btn-primary">+ Upload File</button>
+          <button id="btn-gdrive-vault" class="apple-btn-secondary"><span class="gdrive-icon">☁️</span> Drive Status</button>
+          <button id="btn-open-upload" class="apple-btn-primary">+ Upload to Drive</button>
         </div>
       </header>
 
@@ -406,7 +412,7 @@
           <div class="section-top">
             <div>
               <h2>Tasks</h2>
-              <p class="section-subtitle">Click circle to complete</p>
+              <p class="section-subtitle">Auto-synced to Google Drive</p>
             </div>
             <div class="segmented-control" id="task-filter-segmented">
               <button type="button" class="segment-btn active" data-task-filter="all">All</button>
@@ -454,7 +460,7 @@
 
     <footer class="app-footer">
       <span>STUD</span>
-      <span>Engineered for focused learning.</span>
+      <span>Cloud-synchronized with Google Drive.</span>
     </footer>
   </main>
 
@@ -482,16 +488,16 @@
     </a>
   </nav>
 
-  <!-- File Upload Modal -->
+  <!-- Direct Google Drive Upload Modal -->
   <dialog id="upload-modal">
     <form id="upload-form">
-      <h2>Upload Course Document</h2>
-      <p class="section-subtitle">Store PDFs, code files, slides, or TD sheets.</p>
+      <h2>Upload to Google Drive</h2>
+      <p class="section-subtitle">File will upload straight to your "STUD - Course Files" folder.</p>
       
       <div class="form-group" style="margin-top:16px">
         <label class="apple-label">CHOOSE FILE</label>
         <div class="drop-zone" id="file-drop-zone">
-          <span class="drop-icon">📄</span>
+          <span class="drop-icon">☁️</span>
           <span id="drop-zone-text">Click to choose or drag & drop a file</span>
           <input type="file" id="upload-file-input" required hidden>
         </div>
@@ -518,17 +524,9 @@
         <input type="text" id="upload-name" class="apple-input" placeholder="e.g. Chapitre 2 - Merise & MCD">
       </div>
 
-      <!-- Google Drive Cloud Option in Upload Modal -->
-      <div class="form-group" id="gdrive-upload-option-box">
-        <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--apple-blue);cursor:pointer">
-          <input type="checkbox" id="upload-to-gdrive-checkbox" checked style="accent-color:var(--apple-blue)">
-          <span>☁️ Also save copy to Google Drive ("STUD - Course Files")</span>
-        </label>
-      </div>
-
       <div class="dialog-actions">
         <button type="button" class="apple-btn-secondary" id="upload-cancel">Cancel</button>
-        <button type="submit" class="apple-btn-primary" id="btn-submit-upload">Save File</button>
+        <button type="submit" class="apple-btn-primary" id="btn-submit-upload">Upload to Google Drive</button>
       </div>
     </form>
   </dialog>
@@ -537,10 +535,10 @@
   <dialog id="gdrive-modal">
     <div class="modal-inner">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <h2>Google Drive Integration</h2>
+        <h2>Google Drive Cloud</h2>
         <span class="apple-pill" id="gdrive-modal-status-badge">NOT CONNECTED</span>
       </div>
-      <p class="section-subtitle">Save your course files, TP, TD, and automatic study backups directly into your Google Drive.</p>
+      <p class="section-subtitle">STUD automatically keeps your study time, tasks, and files synchronized with your personal Google Drive.</p>
       
       <div id="gdrive-auth-view" style="margin-top:16px">
         <!-- Disconnected View: Enter Client ID & Sign In -->
@@ -549,19 +547,20 @@
             <label for="gdrive-client-id-input" class="apple-label">GOOGLE CLOUD CLIENT ID</label>
             <input type="text" id="gdrive-client-id-input" class="apple-input" placeholder="e.g. 123456789-abcdef.apps.googleusercontent.com">
             <small class="muted" style="display:block;margin-top:6px;font-size:11px">
-              Stored only in your browser. Allows STUD to upload files to a private folder in your Drive.
+              Allows STUD to save everything automatically to your Google Drive account.
             </small>
           </div>
           
           <details class="gdrive-instructions" style="margin-bottom:18px;font-size:12px;color:var(--text-secondary)">
-            <summary style="cursor:pointer;font-weight:600;color:var(--apple-blue);margin-bottom:8px">📖 Quick Setup Guide (Free, 2 minutes) ▾</summary>
+            <summary style="cursor:pointer;font-weight:600;color:var(--apple-blue);margin-bottom:8px">📖 Google Cloud Setup Instructions ▾</summary>
             <ol style="padding-left:18px;line-height:1.6;margin:6px 0">
-              <li>Open <a href="https://console.cloud.google.com/" target="_blank" class="apple-link-btn" style="display:inline;padding:0">Google Cloud Console</a> and create a project.</li>
+              <li>Open <a href="https://console.cloud.google.com/" target="_blank" class="apple-link-btn" style="display:inline;padding:0">Google Cloud Console</a>.</li>
               <li>Go to <strong>APIs & Services → Library</strong> and enable <strong>Google Drive API</strong>.</li>
-              <li>Under <strong>OAuth consent screen</strong>, select <strong>External</strong> and enter your email.</li>
+              <li>Under <strong>OAuth consent screen</strong>, select <strong>External</strong> and add your email.</li>
+              <li>Under <strong>Test users</strong>, click <strong>+ ADD USERS</strong> and enter your Gmail address (<code>saaad.elfilali@gmail.com</code>).</li>
               <li>Go to <strong>Credentials → Create Credentials → OAuth Client ID</strong> (select <em>Web application</em>).</li>
-              <li>Under <strong>Authorized JavaScript origins</strong>, add <code>http://localhost</code> and your Vercel URL (e.g. <code>https://*.vercel.app</code>).</li>
-              <li>Copy your <strong>Client ID</strong>, paste it above, and click Sign in!</li>
+              <li>Add your authorized JavaScript origins: <code>https://stud-2027.vercel.app</code> and <code>http://localhost</code>.</li>
+              <li>Paste your Client ID above and click Sign in!</li>
             </ol>
           </details>
 
@@ -578,11 +577,11 @@
           <div class="gdrive-connected-card">
             <div style="font-size:36px;margin-bottom:4px">☁️</div>
             <strong style="font-size:16px;color:var(--text-primary)">Connected to Google Drive</strong>
-            <p class="muted" style="font-size:12px;margin:4px 0 16px">Your files and backups will save to the <code>STUD - Course Files</code> folder in your personal Drive.</p>
+            <p class="muted" style="font-size:12px;margin:4px 0 16px">Automatic cloud sync is active. Your data and course files are saved to the <code>STUD - Course Files</code> folder in your Drive.</p>
             
             <div style="display:grid;gap:10px;margin-bottom:18px">
-              <button type="button" class="apple-btn-primary" id="btn-gdrive-backup-now">☁️ Backup Study Data to Drive</button>
-              <button type="button" class="apple-btn-secondary" id="btn-gdrive-restore-now">☁️ Restore Data from Drive</button>
+              <button type="button" class="apple-btn-primary" id="btn-gdrive-sync-now">⟳ Sync Now with Drive</button>
+              <button type="button" class="apple-btn-secondary" id="btn-gdrive-open-folder">📂 Open Drive Folder ↗</button>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border-subtle);padding-top:14px">

@@ -25,7 +25,9 @@ const fresh = () => ({
   subjects: JSON.parse(JSON.stringify(defaultSubjects)),
   sessions: [],
   tasks: [],
-  goal: 600
+  files: [],
+  goal: 600,
+  updatedAt: Date.now()
 });
 
 function migrateState(s) {
@@ -62,7 +64,9 @@ function migrateState(s) {
 
   if (!Array.isArray(s.sessions)) s.sessions = [];
   if (!Array.isArray(s.tasks)) s.tasks = [];
+  if (!Array.isArray(s.files)) s.files = [];
   if (!Number.isFinite(s.goal) || s.goal <= 0) s.goal = 600;
+  if (!Number.isFinite(s.updatedAt)) s.updatedAt = Date.now();
   return s;
 }
 
@@ -92,11 +96,15 @@ function toast(message) {
   toast.timeout = setTimeout(() => el.style.display = 'none', 3500);
 }
 
-function save() {
+function save(autoSync = true) {
+  state.updatedAt = Date.now();
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
-  } catch {
-    toast('Storage unavailable. Export a backup to keep your records.');
+  } catch (e) {
+    console.warn('Storage unavailable', e);
+  }
+  if (autoSync && typeof triggerAutoSync === 'function') {
+    triggerAutoSync();
   }
 }
 
@@ -223,7 +231,7 @@ document.addEventListener('click', e => {
 });
 
 /* ============================================================
-   GOOGLE DRIVE INTEGRATION (METHOD 2: DIRECT API & OAUTH)
+   GOOGLE DRIVE INTEGRATION & AUTOMATED CLOUD SYNC
 ============================================================ */
 const GDRIVE_TOKEN_KEY = 'stud_gdrive_token';
 const GDRIVE_EXP_KEY = 'stud_gdrive_exp';
@@ -232,6 +240,7 @@ const GDRIVE_FOLDER_ID_KEY = 'stud_gdrive_folder_id';
 
 let gdriveTokenClient = null;
 let gdriveAccessToken = null;
+let autoSyncTimeout = null;
 
 function getGoogleClientId() {
   return localStorage.getItem(GDRIVE_CLIENT_ID_KEY) || '';
@@ -251,12 +260,19 @@ function isGoogleDriveConnected() {
   return false;
 }
 
+function handleExpiredToken() {
+  localStorage.removeItem(GDRIVE_TOKEN_KEY);
+  localStorage.removeItem(GDRIVE_EXP_KEY);
+  gdriveAccessToken = null;
+  updateGoogleDriveUI('error');
+}
+
 function disconnectGoogleDrive() {
   localStorage.removeItem(GDRIVE_TOKEN_KEY);
   localStorage.removeItem(GDRIVE_EXP_KEY);
   localStorage.removeItem(GDRIVE_FOLDER_ID_KEY);
   gdriveAccessToken = null;
-  updateGoogleDriveUI();
+  updateGoogleDriveUI('disconnected');
   toast('Disconnected from Google Drive.');
 }
 
@@ -280,18 +296,21 @@ function requestGoogleDriveToken() {
       callback: async (resp) => {
         if (resp.error !== undefined) {
           console.error('Google Auth Error:', resp);
-          toast('Google authorization failed: ' + resp.error);
+          toast('Google authorization failed: ' + (resp.error_description || resp.error));
+          updateGoogleDriveUI('error');
           return;
         }
         gdriveAccessToken = resp.access_token;
         localStorage.setItem(GDRIVE_TOKEN_KEY, gdriveAccessToken);
         localStorage.setItem(GDRIVE_EXP_KEY, Date.now() + (Number(resp.expires_in || 3599) * 1000));
-        updateGoogleDriveUI();
+        updateGoogleDriveUI('synced');
         toast('✓ Connected to Google Drive!');
+        $('gdrive-modal')?.close();
         try {
           await getOrCreateStudFolder();
+          await syncWithGoogleDrive(true);
         } catch (e) {
-          console.warn('Folder check:', e);
+          console.warn('Initial folder/sync:', e);
         }
       }
     });
@@ -311,6 +330,12 @@ async function getOrCreateStudFolder() {
   const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
     headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }
   });
+
+  if (searchRes.status === 401) {
+    handleExpiredToken();
+    throw new Error('Google Drive session expired. Please reconnect.');
+  }
+
   const searchData = await searchRes.json();
   if (searchData.files && searchData.files.length > 0) {
     folderId = searchData.files[0].id;
@@ -329,6 +354,12 @@ async function getOrCreateStudFolder() {
       mimeType: 'application/vnd.google-apps.folder'
     })
   });
+
+  if (createRes.status === 401) {
+    handleExpiredToken();
+    throw new Error('Google Drive session expired. Please reconnect.');
+  }
+
   const folderData = await createRes.json();
   folderId = folderData.id;
   localStorage.setItem(GDRIVE_FOLDER_ID_KEY, folderId);
@@ -353,6 +384,11 @@ async function uploadFileToGoogleDrive(file, customTitle) {
     body: form
   });
 
+  if (res.status === 401) {
+    handleExpiredToken();
+    throw new Error('Google Drive session expired. Please reconnect.');
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.message || 'Google Drive upload failed');
@@ -361,13 +397,27 @@ async function uploadFileToGoogleDrive(file, customTitle) {
   return await res.json();
 }
 
-async function backupStudyDataToGoogleDrive() {
+async function deleteFileFromGoogleDrive(fileId) {
+  if (!isGoogleDriveConnected() || !fileId) return;
+  try {
+    await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }
+    });
+  } catch (err) {
+    console.warn('Drive file deletion error:', err);
+  }
+}
+
+async function backupStudyDataToGoogleDrive(silent = false) {
   if (!isGoogleDriveConnected()) {
-    openGoogleDriveModal();
+    if (!silent) openGoogleDriveModal();
     return;
   }
   try {
-    toast('Backing up data to Google Drive...');
+    if (!silent) toast('Syncing with Google Drive...');
+    updateGoogleDriveUI('syncing');
+
     const folderId = await getOrCreateStudFolder();
     const fileName = 'STUD-data-backup.json';
 
@@ -375,10 +425,26 @@ async function backupStudyDataToGoogleDrive() {
     const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`, {
       headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }
     });
+
+    if (searchRes.status === 401) {
+      handleExpiredToken();
+      throw new Error('Session expired. Please reconnect.');
+    }
+
     const searchData = await searchRes.json();
     const existingFile = searchData.files && searchData.files[0];
 
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const payload = {
+      semesters: state.semesters,
+      subjects: state.subjects,
+      sessions: state.sessions,
+      tasks: state.tasks,
+      files: state.files,
+      goal: state.goal,
+      updatedAt: state.updatedAt || Date.now()
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
 
     if (existingFile) {
       await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existingFile.id}?uploadType=media`, {
@@ -396,20 +462,25 @@ async function backupStudyDataToGoogleDrive() {
         body: form
       });
     }
-    toast('✓ Study data backed up to Google Drive!');
+    updateGoogleDriveUI('synced');
+    if (!silent) toast('✓ Study data backed up to Google Drive!');
   } catch (err) {
     console.error(err);
-    toast('Backup error: ' + (err.message || 'Failed to upload backup to Drive'));
+    updateGoogleDriveUI('error');
+    if (!silent) toast('Backup error: ' + (err.message || 'Failed to upload backup to Drive'));
+    throw err;
   }
 }
 
-async function restoreStudyDataFromGoogleDrive() {
+async function syncWithGoogleDrive(silent = false) {
   if (!isGoogleDriveConnected()) {
-    openGoogleDriveModal();
+    if (!silent) openGoogleDriveModal();
     return;
   }
   try {
-    toast('Checking Google Drive for backup...');
+    if (!silent) toast('Checking Google Drive for updates...');
+    updateGoogleDriveUI('syncing');
+
     const folderId = await getOrCreateStudFolder();
     const fileName = 'STUD-data-backup.json';
 
@@ -417,29 +488,79 @@ async function restoreStudyDataFromGoogleDrive() {
     const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,modifiedTime)`, {
       headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }
     });
+
+    if (searchRes.status === 401) {
+      handleExpiredToken();
+      throw new Error('Session expired. Please reconnect.');
+    }
+
     const searchData = await searchRes.json();
-    if (!searchData.files || !searchData.files.length) {
-      toast('No Google Drive backup found yet. Create a backup first.');
+    const existingFile = searchData.files && searchData.files[0];
+
+    if (!existingFile) {
+      await backupStudyDataToGoogleDrive(true);
+      updateGoogleDriveUI('synced');
+      if (!silent) toast('✓ Initialized cloud backup on Google Drive!');
       return;
     }
-    const fileId = searchData.files[0].id;
+
+    const fileId = existingFile.id;
     const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
       headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }
     });
-    const data = await downloadRes.json();
-    if (!validBackup(data)) {
-      toast('Invalid backup file on Google Drive.');
+    const remoteData = await downloadRes.json();
+
+    if (!validBackup(remoteData)) {
+      console.warn('Invalid remote data structure; keeping local.');
+      updateGoogleDriveUI('synced');
       return;
     }
-    if (!confirm('Replace current study data with the backup from Google Drive?')) return;
-    state = migrateState({ ...data, timer: null });
-    save();
-    render();
-    toast('✓ Restored latest study data from Google Drive!');
+
+    const localUpdated = Number(state.updatedAt || 0);
+    const remoteUpdated = Number(remoteData.updatedAt || 0);
+
+    const localEmpty = (!state.sessions || state.sessions.length === 0) && (!state.tasks || state.tasks.length === 0) && (!state.files || state.files.length === 0);
+    const remoteHasData = (remoteData.sessions && remoteData.sessions.length > 0) || (remoteData.tasks && remoteData.tasks.length > 0) || (remoteData.files && remoteData.files.length > 0);
+
+    if (remoteUpdated > localUpdated || (localEmpty && remoteHasData)) {
+      state = migrateState({ ...remoteData, timer: null });
+      localStorage.setItem(KEY, JSON.stringify(state));
+      render();
+      renderFiles();
+      renderDashboardFilesPreview();
+      updateGoogleDriveUI('synced');
+      if (!silent) toast('✓ Updated with latest study data from Google Drive!');
+    } else if (localUpdated > remoteUpdated) {
+      await backupStudyDataToGoogleDrive(true);
+      updateGoogleDriveUI('synced');
+      if (!silent) toast('✓ Google Drive synced with latest local changes!');
+    } else {
+      updateGoogleDriveUI('synced');
+      if (!silent) toast('✓ Everything is up to date.');
+    }
   } catch (err) {
-    console.error(err);
-    toast('Restore error: ' + (err.message || 'Failed to download from Drive'));
+    console.error('Sync error:', err);
+    updateGoogleDriveUI('error');
+    if (!silent) toast('Sync error: ' + (err.message || 'Could not sync with Google Drive'));
   }
+}
+
+function triggerAutoSync() {
+  if (!isGoogleDriveConnected()) {
+    updateGoogleDriveUI('disconnected');
+    return;
+  }
+  updateGoogleDriveUI('syncing');
+  clearTimeout(autoSyncTimeout);
+  autoSyncTimeout = setTimeout(async () => {
+    try {
+      await backupStudyDataToGoogleDrive(true);
+      updateGoogleDriveUI('synced');
+    } catch (err) {
+      console.warn('Auto-sync failed:', err);
+      updateGoogleDriveUI('error');
+    }
+  }, 1500);
 }
 
 function openGoogleDriveModal() {
@@ -451,37 +572,61 @@ function openGoogleDriveModal() {
   modalEl.showModal();
 }
 
-function updateGoogleDriveUI() {
+function updateGoogleDriveUI(syncState = null) {
   const connected = isGoogleDriveConnected();
+  const effectiveState = connected ? (syncState || 'synced') : 'disconnected';
 
-  // Sidebar container
-  const sidebarBox = $('sidebar-gdrive-box');
-  if (sidebarBox) {
-    sidebarBox.innerHTML = connected ? `
-      <div class="gdrive-status-badge">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span class="dot gdrive-dot"></span>
-          <span>Google Drive</span>
-        </div>
-        <button type="button" id="btn-sidebar-gdrive-open" class="quiet-btn-apple" style="padding:0">Manage ↗</button>
-      </div>
+  // 1. Sidebar Cloud Card
+  const syncStatusEl = $('cloud-sync-status');
+  const statusDescEl = $('cloud-status-desc');
+  const cardActionsEl = $('cloud-card-actions');
+
+  if (syncStatusEl) {
+    if (!connected) {
+      syncStatusEl.innerHTML = '<span class="sync-dot disconnected"></span> Not Connected';
+    } else if (effectiveState === 'syncing') {
+      syncStatusEl.innerHTML = '<span class="sync-dot syncing"></span> Syncing...';
+    } else if (effectiveState === 'error') {
+      syncStatusEl.innerHTML = '<span class="sync-dot disconnected"></span> Re-auth needed';
+    } else {
+      syncStatusEl.innerHTML = '<span class="sync-dot synced"></span> Synced';
+    }
+  }
+
+  if (statusDescEl) {
+    statusDescEl.textContent = connected
+      ? 'Automatic cloud sync is active. All sessions and course files sync to your Google Drive.'
+      : 'Connect your Google Drive to sync sessions, tasks & course files across all your devices.';
+  }
+
+  if (cardActionsEl) {
+    cardActionsEl.innerHTML = connected ? `
+      <button type="button" id="btn-sidebar-manage" class="apple-btn-secondary" style="width:100%;font-size:12px;padding:7px 10px">
+        Manage Cloud ⚙
+      </button>
     ` : `
-      <button type="button" id="btn-sidebar-gdrive" class="apple-gdrive-btn">
-        <span class="gdrive-icon">☁️</span> Google Drive
+      <button type="button" id="btn-sidebar-connect" class="apple-btn-primary" style="width:100%;font-size:12px;padding:7px 10px">
+        <span class="gdrive-icon">☁️</span> Connect Google Drive
       </button>
     `;
 
-    const openBtn = $('btn-sidebar-gdrive-open') || $('btn-sidebar-gdrive');
-    if (openBtn) openBtn.onclick = () => openGoogleDriveModal();
+    const manageBtn = $('btn-sidebar-manage');
+    if (manageBtn) manageBtn.onclick = () => openGoogleDriveModal();
+    const connectBtn = $('btn-sidebar-connect');
+    if (connectBtn) connectBtn.onclick = () => openGoogleDriveModal();
   }
 
-  // Upload modal drive checkbox option
-  const uploadOptionBox = $('gdrive-upload-option-box');
-  if (uploadOptionBox) {
-    uploadOptionBox.style.display = connected ? 'block' : 'none';
+  // 2. Mobile Top Bar
+  const mobileDot = $('mobile-cloud-dot');
+  const mobileLabel = $('mobile-cloud-label');
+  if (mobileDot) {
+    mobileDot.className = 'dot ' + (connected ? (effectiveState === 'syncing' ? 'syncing' : 'synced') : 'disconnected');
+  }
+  if (mobileLabel) {
+    mobileLabel.textContent = connected ? (effectiveState === 'syncing' ? 'Syncing...' : 'Drive') : 'Connect';
   }
 
-  // Modal views
+  // 3. Modal Views
   const disconnBox = $('gdrive-disconnected-box');
   const connBox = $('gdrive-connected-box');
   const statusBadge = $('gdrive-modal-status-badge');
@@ -506,14 +651,12 @@ function updateGoogleDriveUI() {
 }
 
 function setupGoogleDriveListeners() {
-  // Open buttons
   const vaultBtn = $('btn-gdrive-vault');
   if (vaultBtn) vaultBtn.onclick = () => openGoogleDriveModal();
 
-  const mobileBtn = $('mobile-gdrive-btn');
+  const mobileBtn = $('mobile-cloud-btn');
   if (mobileBtn) mobileBtn.onclick = () => openGoogleDriveModal();
 
-  // Modal actions
   const closeBtn = $('gdrive-modal-close');
   if (closeBtn) closeBtn.onclick = () => $('gdrive-modal')?.close();
 
@@ -536,80 +679,51 @@ function setupGoogleDriveListeners() {
   const disconnectBtn = $('btn-gdrive-disconnect');
   if (disconnectBtn) disconnectBtn.onclick = () => disconnectGoogleDrive();
 
-  const backupBtn = $('btn-gdrive-backup-now');
-  if (backupBtn) backupBtn.onclick = () => backupStudyDataToGoogleDrive();
+  const syncBtn = $('btn-gdrive-sync-now');
+  if (syncBtn) syncBtn.onclick = () => syncWithGoogleDrive(false);
 
-  const restoreBtn = $('btn-gdrive-restore-now');
-  if (restoreBtn) restoreBtn.onclick = () => restoreStudyDataFromGoogleDrive();
-}
-
-/* ============================================================
-   INDEXEDDB COURSE FILES VAULT (COURS, TP, TD)
-============================================================ */
-const DB_NAME = 'stud_files_db';
-const DB_VERSION = 1;
-const STORE_NAME = 'course_files';
-
-function openFilesDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = e => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('subjectId', 'subjectId', { unique: false });
-        store.createIndex('category', 'category', { unique: false });
+  const openFolderBtn = $('btn-gdrive-open-folder');
+  if (openFolderBtn) {
+    openFolderBtn.onclick = () => {
+      const folderId = localStorage.getItem(GDRIVE_FOLDER_ID_KEY);
+      if (folderId) {
+        window.open('https://drive.google.com/drive/folders/' + folderId, '_blank');
+      } else {
+        window.open('https://drive.google.com/drive', '_blank');
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function dbSaveFile(fileRecord) {
-  const db = await openFilesDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(fileRecord);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function dbGetAllFiles() {
-  try {
-    const db = await openFilesDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const req = tx.objectStore(STORE_NAME).getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
-    });
-  } catch {
-    return [];
   }
 }
 
-async function dbDeleteFile(id) {
-  const db = await openFilesDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+function cleanupLegacyIndexedDB() {
+  try {
+    if (window.indexedDB) {
+      window.indexedDB.deleteDatabase('stud_files_db');
+    }
+  } catch (e) {
+    // ignore
+  }
 }
 
-let cachedFiles = [];
+async function initCloudSync() {
+  cleanupLegacyIndexedDB();
+  updateGoogleDriveUI();
+  if (isGoogleDriveConnected()) {
+    try {
+      await getOrCreateStudFolder();
+      await syncWithGoogleDrive(true);
+    } catch (err) {
+      console.warn('Startup sync:', err);
+    }
+  }
+}
+
+/* ============================================================
+   GOOGLE DRIVE CLOUD COURSE FILES VAULT (COURS, TP, TD, EXAMS)
+============================================================ */
 let activeFileCategory = 'all';
 let activeFileSubject = 'all';
 let fileSearchQuery = '';
-
-async function loadFiles() {
-  cachedFiles = await dbGetAllFiles();
-  renderFiles();
-  renderDashboardFilesPreview();
-}
 
 function getFileIcon(type, name) {
   const ext = (name.split('.').pop() || '').toLowerCase();
@@ -626,7 +740,9 @@ function renderFiles() {
   const grid = $('files-grid');
   if (!grid) return;
 
-  let filtered = [...cachedFiles];
+  const filesList = Array.isArray(state.files) ? state.files : [];
+  let filtered = [...filesList];
+
   if (activeFileCategory !== 'all') {
     filtered = filtered.filter(f => f.category === activeFileCategory);
   }
@@ -641,10 +757,10 @@ function renderFiles() {
   if (!filtered.length) {
     grid.innerHTML = `
       <div class="empty" style="grid-column: 1 / -1; padding: 48px 16px;">
-        <span style="font-size:36px;display:block;margin-bottom:8px">📂</span>
-        <strong>No documents found.</strong><br>
-        Store your Cours, TP code, TD sheets, or exams here for instant access and cloud backup.
-        <br><button class="apple-btn-primary" id="btn-empty-upload" style="margin-top:14px">+ Upload Document</button>
+        <span style="font-size:36px;display:block;margin-bottom:8px">☁️</span>
+        <strong>No documents in your Cloud Vault.</strong><br>
+        Store your Cours, TP code, TD exercises, or past exams directly in your Google Drive.
+        <br><button class="apple-btn-primary" id="btn-empty-upload" style="margin-top:14px">+ Upload to Google Drive</button>
       </div>
     `;
     const emptyBtn = $('btn-empty-upload');
@@ -652,9 +768,8 @@ function renderFiles() {
     return;
   }
 
-  grid.innerHTML = filtered.sort((a, b) => b.date - a.date).map(f => {
+  grid.innerHTML = filtered.sort((a, b) => (b.date || 0) - (a.date || 0)).map(f => {
     const icon = getFileIcon(f.type || '', f.name);
-    const isGDrive = !!f.gdrive;
     return `
       <div class="file-card">
         <div class="file-top">
@@ -668,16 +783,16 @@ function renderFiles() {
         <div class="file-meta">
           <div>
             <span class="cat-badge ${esc(f.category)}">${esc(f.category)}</span>
-            ${isGDrive ? `<span class="cat-badge gdrive-badge" title="Saved in Google Drive">☁️ Drive</span>` : ''}
+            <span class="cat-badge gdrive-badge" title="Saved in Google Drive: STUD - Course Files">☁️ Drive</span>
           </div>
           <span>${formatBytes(f.size || 0)} · ${new Date(f.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
         </div>
 
         <div class="file-actions">
-          <button class="file-action-btn" data-preview-file="${esc(f.id)}" title="${isGDrive ? 'Open in Google Drive' : 'Preview file'}">👁 View</button>
-          <button class="file-action-btn" data-download-file="${esc(f.id)}" title="Download file">↓ Download</button>
-          <button class="file-action-btn share-btn" data-share-file="${esc(f.id)}" title="Share file">↗ Share</button>
-          <button class="file-action-btn delete-btn" data-delete-file="${esc(f.id)}" title="Delete file">×</button>
+          <button class="file-action-btn" data-preview-file="${esc(f.id)}" title="Open and preview in Google Drive">👁 View</button>
+          <button class="file-action-btn" data-download-file="${esc(f.id)}" title="Download file from Drive">↓ Download</button>
+          <button class="file-action-btn share-btn" data-share-file="${esc(f.id)}" title="Share Google Drive link">↗ Share</button>
+          <button class="file-action-btn delete-btn" data-delete-file="${esc(f.id)}" title="Delete file from Google Drive">×</button>
         </div>
       </div>
     `;
@@ -688,22 +803,22 @@ function renderDashboardFilesPreview() {
   const container = $('dashboard-files-list');
   if (!container) return;
 
-  if (!cachedFiles.length) {
-    container.innerHTML = `<div class="empty" style="padding:16px 0">No files stored yet.<br><a href="#files" class="apple-link-btn" style="margin-top:6px">+ Go to Vault</a></div>`;
+  const filesList = Array.isArray(state.files) ? state.files : [];
+  if (!filesList.length) {
+    container.innerHTML = `<div class="empty" style="padding:16px 0">No cloud files stored yet.<br><a href="#files" class="apple-link-btn" style="margin-top:6px">+ Go to Vault</a></div>`;
     return;
   }
 
-  const latest = [...cachedFiles].sort((a, b) => b.date - a.date).slice(0, 3);
+  const latest = [...filesList].sort((a, b) => (b.date || 0) - (a.date || 0)).slice(0, 3);
   container.innerHTML = latest.map(f => `
     <div class="file-mini-row">
       <div>
         <strong>${getFileIcon(f.type || '', f.name)} ${esc(f.customTitle || f.name)}</strong>
         <div class="muted" style="font-size:10px">
-          ${esc(subjectName(f.subjectId))} · ${formatBytes(f.size || 0)}
-          ${f.gdrive ? ' · ☁️ Drive' : ''}
+          ${esc(subjectName(f.subjectId))} · ${formatBytes(f.size || 0)} · ☁️ Drive
         </div>
       </div>
-      <button class="quiet-btn-apple" data-download-file="${esc(f.id)}">↓ Get</button>
+      <button class="quiet-btn-apple" data-preview-file="${esc(f.id)}">👁 View</button>
     </div>
   `).join('');
 }
@@ -723,15 +838,19 @@ function openUploadModal() {
   if (dropText) dropText.textContent = 'Click to choose or drag & drop a file';
   if ($('upload-name')) $('upload-name').value = '';
 
-  const gdriveCheckbox = $('upload-to-gdrive-checkbox');
-  const gdriveBox = $('gdrive-upload-option-box');
-  if (gdriveBox) {
-    const connected = isGoogleDriveConnected();
-    gdriveBox.style.display = connected ? 'block' : 'none';
-    if (gdriveCheckbox) gdriveCheckbox.checked = connected;
-  }
-
   modalEl.showModal();
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      toast('✓ Copied Google Drive link to clipboard!');
+    }).catch(() => {
+      prompt('Copy Google Drive link:', text);
+    });
+  } else {
+    prompt('Copy Google Drive link:', text);
+  }
 }
 
 function setupFileVaultUI() {
@@ -781,46 +900,49 @@ function setupFileVaultUI() {
         toast('Please select a file first.');
         return;
       }
-      const submitBtn = $('btn-submit-upload');
-      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving...'; }
 
-      const record = {
-        id: uid(),
-        name: pendingUploadFile.name,
-        customTitle: $('upload-name').value.trim() || pendingUploadFile.name,
-        category: $('upload-category').value,
-        subjectId: $('upload-subject').value,
-        type: pendingUploadFile.type || 'application/octet-stream',
-        size: pendingUploadFile.size,
-        date: Date.now(),
-        blob: pendingUploadFile
-      };
-
-      const uploadToDrive = $('upload-to-gdrive-checkbox')?.checked && isGoogleDriveConnected();
-      if (uploadToDrive) {
-        try {
-          toast('Uploading file to Google Drive...');
-          const driveData = await uploadFileToGoogleDrive(pendingUploadFile, record.customTitle);
-          record.gdrive = {
-            fileId: driveData.id,
-            webViewLink: driveData.webViewLink,
-            webContentLink: driveData.webContentLink
-          };
-        } catch (err) {
-          console.error('Drive upload failed:', err);
-          toast('Drive upload: ' + (err.message || 'error') + '. Saved locally.');
-        }
+      if (!isGoogleDriveConnected()) {
+        openGoogleDriveModal();
+        toast('Please connect your Google Drive first to upload documents.');
+        return;
       }
 
+      const submitBtn = $('btn-submit-upload');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Uploading to Drive...'; }
+
       try {
-        await dbSaveFile(record);
+        toast('Uploading file directly to Google Drive...');
+        const customTitle = $('upload-name')?.value.trim() || pendingUploadFile.name;
+        const driveData = await uploadFileToGoogleDrive(pendingUploadFile, customTitle);
+
+        const record = {
+          id: uid(),
+          name: pendingUploadFile.name,
+          customTitle: customTitle,
+          category: $('upload-category')?.value || 'cours',
+          subjectId: $('upload-subject')?.value || state.subjects[0]?.id,
+          type: pendingUploadFile.type || 'application/octet-stream',
+          size: pendingUploadFile.size || 0,
+          date: Date.now(),
+          gdrive: {
+            fileId: driveData.id,
+            webViewLink: driveData.webViewLink || `https://drive.google.com/file/d/${driveData.id}/view`,
+            webContentLink: driveData.webContentLink || `https://drive.google.com/uc?id=${driveData.id}&export=download`
+          }
+        };
+
+        if (!Array.isArray(state.files)) state.files = [];
+        state.files.push(record);
+        save();
         $('upload-modal')?.close();
-        await loadFiles();
-        toast(record.gdrive ? `✓ Saved & uploaded "${record.customTitle}" to Google Drive!` : `✓ Saved "${record.customTitle}" to Course Vault.`);
+        renderFiles();
+        renderDashboardFilesPreview();
+        toast(`✓ Uploaded "${record.customTitle}" directly to Google Drive!`);
       } catch (err) {
-        toast('Could not save file to local database.');
+        console.error('Upload error:', err);
+        toast('Upload failed: ' + (err.message || 'Could not upload to Google Drive.'));
       } finally {
-        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Save File'; }
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Upload to Google Drive'; }
       }
     };
   }
@@ -858,56 +980,38 @@ function setupFileVaultUI() {
     if (!b) return;
 
     if (b.dataset.previewFile) {
-      const file = cachedFiles.find(f => f.id === b.dataset.previewFile);
+      const filesList = Array.isArray(state.files) ? state.files : [];
+      const file = filesList.find(f => f.id === b.dataset.previewFile);
       if (!file) return;
-      if (file.gdrive && file.gdrive.webViewLink) {
-        window.open(file.gdrive.webViewLink, '_blank');
-        return;
-      }
-      if (file.blob) {
-        const url = URL.createObjectURL(file.blob);
+      const url = file.gdrive?.webViewLink || (file.gdrive?.fileId ? `https://drive.google.com/file/d/${file.gdrive.fileId}/view` : null);
+      if (url) {
         window.open(url, '_blank');
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } else {
+        toast('File view link unavailable.');
       }
       return;
     }
 
     if (b.dataset.downloadFile) {
-      const file = cachedFiles.find(f => f.id === b.dataset.downloadFile);
+      const filesList = Array.isArray(state.files) ? state.files : [];
+      const file = filesList.find(f => f.id === b.dataset.downloadFile);
       if (!file) return;
-      if (file.blob) {
-        const url = URL.createObjectURL(file.blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = file.name;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        return;
-      }
-      if (file.gdrive && file.gdrive.webContentLink) {
-        window.open(file.gdrive.webContentLink, '_blank');
+      const url = file.gdrive?.webContentLink || (file.gdrive?.fileId ? `https://drive.google.com/uc?id=${file.gdrive.fileId}&export=download` : null);
+      if (url) {
+        window.open(url, '_blank');
+      } else {
+        toast('Download link unavailable.');
       }
       return;
     }
 
     if (b.dataset.shareFile) {
-      const file = cachedFiles.find(f => f.id === b.dataset.shareFile);
+      const filesList = Array.isArray(state.files) ? state.files : [];
+      const file = filesList.find(f => f.id === b.dataset.shareFile);
       if (!file) return;
-      const shareUrl = file.gdrive ? file.gdrive.webViewLink : null;
+      const shareUrl = file.gdrive?.webViewLink || (file.gdrive?.fileId ? `https://drive.google.com/file/d/${file.gdrive.fileId}/view` : '');
       const shareTitle = file.customTitle || file.name;
-      const shareText = `${file.category.toUpperCase()} - ${subjectName(file.subjectId)}`;
-
-      if (file.blob) {
-        try {
-          const shareFileObj = new File([file.blob], file.name, { type: file.type || 'application/octet-stream' });
-          if (navigator.canShare && navigator.canShare({ files: [shareFileObj] })) {
-            await navigator.share({ title: shareTitle, text: shareText, files: [shareFileObj], ...(shareUrl ? { url: shareUrl } : {}) });
-            return;
-          }
-        } catch (err) {
-          if (err.name === 'AbortError') return;
-        }
-      }
+      const shareText = `${file.category.toUpperCase()} - ${subjectName(file.subjectId)} (STUD)`;
 
       if (shareUrl) {
         if (navigator.share) {
@@ -918,33 +1022,26 @@ function setupFileVaultUI() {
             if (err.name === 'AbortError') return;
           }
         }
-        navigator.clipboard.writeText(shareUrl).then(() => {
-          toast('✓ Copied Google Drive link to clipboard!');
-        }).catch(() => {
-          prompt('Copy Google Drive link:', shareUrl);
-        });
-        return;
-      }
-
-      if (file.blob) {
-        const url = URL.createObjectURL(file.blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = file.name;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        toast(`File downloaded for sharing.`);
+        copyToClipboard(shareUrl);
+      } else {
+        toast('Google Drive link unavailable to share.');
       }
       return;
     }
 
     if (b.dataset.deleteFile) {
-      const file = cachedFiles.find(f => f.id === b.dataset.deleteFile);
+      const filesList = Array.isArray(state.files) ? state.files : [];
+      const file = filesList.find(f => f.id === b.dataset.deleteFile);
       if (!file) return;
-      if (confirm(`Delete file "${file.customTitle || file.name}"?`)) {
-        await dbDeleteFile(file.id);
-        await loadFiles();
-        toast('File deleted.');
+      if (confirm(`Delete "${file.customTitle || file.name}" from your Google Drive?`)) {
+        if (file.gdrive?.fileId && isGoogleDriveConnected()) {
+          deleteFileFromGoogleDrive(file.gdrive.fileId).catch(err => console.warn('Drive deletion:', err));
+        }
+        state.files = filesList.filter(f => f.id !== file.id);
+        save();
+        renderFiles();
+        renderDashboardFilesPreview();
+        toast('File removed from Google Drive.');
       }
       return;
     }
@@ -1641,17 +1738,8 @@ $('edit-goal').onclick = () => modal('Set Weekly Goal', `
 });
 
 /* ============================================================
-   BACKUP & RESTORE (LOCAL JSON)
+   VALIDATION HELPERS
 ============================================================ */
-$('export').onclick = () => {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `STUD-backup-${day(new Date())}.json`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
-
 function validBackup(d) {
   return d &&
     Array.isArray(d.subjects) && d.subjects.length > 0 &&
@@ -1659,67 +1747,12 @@ function validBackup(d) {
     Number.isFinite(d.goal) && d.goal > 0 &&
     Array.isArray(d.tasks) && d.tasks.every(t => typeof t.id === 'string' && typeof t.title === 'string' && typeof t.done === 'boolean' && (!t.due || validDate(t.due))) &&
     Array.isArray(d.sessions) && d.sessions.every(s => typeof s.id === 'string' && d.subjects.some(x => x.id === s.subject) && Number.isInteger(s.minutes) && s.minutes > 0 && s.minutes <= 1440 && validDate(s.date)) &&
-    (!d.semesters || (Array.isArray(d.semesters) && d.semesters.every(sem => typeof sem.id === 'string' && typeof sem.name === 'string')));
+    (!d.semesters || (Array.isArray(d.semesters) && d.semesters.every(sem => typeof sem.id === 'string' && typeof sem.name === 'string'))) &&
+    (!d.files || Array.isArray(d.files));
 }
 
 function validDate(s) {
   return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s + 'T12:00:00').getTime());
-}
-
-async function handleImportFile(file) {
-  if (!file) return;
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    if (!validBackup(data)) throw Error();
-    if (!confirm('Replace current study data with this backup?')) return;
-    state = migrateState({ ...data, timer: null });
-    save();
-    render();
-    toast('Backup restored successfully.');
-  } catch {
-    toast('Could not restore: choose a valid STUD backup.');
-  }
-}
-
-$('import').onchange = e => {
-  const file = e.target.files[0];
-  if (file) handleImportFile(file);
-  e.target.value = '';
-};
-
-const mobileBackupBtn = $('mobile-backup');
-if (mobileBackupBtn) {
-  mobileBackupBtn.onclick = () => {
-    modal('Data & Backup Sync', `
-      <p style="font-size:12px;color:var(--text-secondary);margin:0 0 16px;line-height:1.5">
-        Export backups to keep your study data safe or transfer progress between your PC and phone.
-      </p>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <button type="button" class="apple-btn-primary" id="modal-gdrive-sync-btn" style="width:100%;text-align:center">☁️ Cloud Sync (Google Drive)</button>
-        <button type="button" class="apple-btn-secondary" id="modal-export-btn" style="width:100%;text-align:center">↓ Download JSON Backup</button>
-        <label class="apple-btn-secondary" style="display:block;text-align:center;padding:11px 16px;border-radius:var(--radius-pill);cursor:pointer;font-weight:600">
-          ↑ Choose Backup File to Restore
-          <input type="file" id="modal-import-input" accept="application/json" hidden>
-        </label>
-      </div>
-    `, () => true);
-
-    setTimeout(() => {
-      const gdriveBtn = $('modal-gdrive-sync-btn');
-      if (gdriveBtn) gdriveBtn.onclick = () => { $('modal').close(); openGoogleDriveModal(); };
-      const expBtn = $('modal-export-btn');
-      if (expBtn) expBtn.onclick = () => { $('export').click(); $('modal').close(); };
-      const impInput = $('modal-import-input');
-      if (impInput) impInput.onchange = e => {
-        const file = e.target.files[0];
-        if (file) {
-          $('modal').close();
-          handleImportFile(file);
-        }
-      };
-    }, 50);
-  };
 }
 
 const mobileHistoryBtn = $('mobile-history-btn');
@@ -1813,9 +1846,15 @@ setupTasksUI();
 setupHistoryUI();
 setupGoogleDriveListeners();
 
-save();
+// Save local state without triggering cloud sync on first load
+state.updatedAt = state.updatedAt || Date.now();
+try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
 render();
-loadFiles();
+renderFiles();
+renderDashboardFilesPreview();
+
+// Initial cloud sync (silent, checks Drive for newer data on startup)
+initCloudSync();
 
 const initialHash = window.location.hash.replace('#', '');
 switchPage(initialHash || 'dashboard', false);
