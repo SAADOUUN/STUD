@@ -99,3 +99,10 @@ node tests/run-browser.cjs
 ```
 
 The runner launches a separate headless Chrome profile, generates a test copy of the current HTML, and runs 39 checks at desktop and emulated phone sizes. Drive responses are mocked and external Google requests are blocked. Screenshots and generated browser artifacts are ignored by Git; the tests directory is excluded from Vercel deployments. No live Google account is needed.
+
+
+## Theme colors and contrast checks
+
+`theme.css` owns the shared light/dark palette. Components pair semantic foregrounds and backgrounds for controls, cards, badges, alerts, menus, the calendar, and the time logger. Filled buttons use a separate color from text links to preserve contrast in dark mode. The theme is applied before the page paints to avoid a light flash.
+
+The browser runner also audits computed text/background contrast across all ten views and the upload, Drive, editing, search, choice, and preview panels. It checks normal, hover, and keyboard-focus states in both themes at desktop and phone widths, including each file category and overdue tasks. Standard text is checked against 4.5:1 and large text against 3:1. Audit JSON and screenshots are generated under `tests/` and ignored by Git. A failed contrast check fails the runner. This is a local regression check, not a full accessibility certification or a test of Google's embedded document viewer.

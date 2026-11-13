@@ -4,3 +4,5 @@
 /tests/browser*-result.html
 /tests/chrome*-stderr.log
 /tests/*.png
+
+/tests/*-color-audit.json

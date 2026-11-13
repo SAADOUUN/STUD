@@ -9,8 +9,8 @@ let child;
 (async () => {
   let html = fs.readFileSync(path.join(root,'index.html'),'utf8');
   html = html.replace('<script src="https://accounts.google.com/gsi/client" async defer></script>','<script>localStorage.clear();</script>');
-  for (const file of ['app.js','study.js','features.js','ui.js','style.css']) html = html.replace(`"${file}"`,`"../${file}"`);
-  html = html.replace('</head>','<script src="browser-tests.js" defer></script></head>');
+  for (const file of ['app.js','study.js','features.js','ui.js','style.css','theme.css']) html = html.replace(`"${file}"`,`"../${file}"`);
+  html = html.replace('</head>','<script src="color-audit.js" defer></script><script src="browser-tests.js" defer></script></head>');
   fs.writeFileSync(path.join(__dirname,'browser-smoke.html'),html);
   child = spawn(chrome, ['--headless','--disable-gpu','--no-first-run','--no-default-browser-check','--allow-file-access-from-files','--remote-debugging-port=0',`--user-data-dir=${path.join(__dirname,'cdp-profile')}`], {windowsHide:true,stdio:['ignore','ignore','pipe']});
   const endpoint = await new Promise((resolve,reject) => {
@@ -38,17 +38,22 @@ let child;
     }
     if(!report)throw new Error(`${name}: tests timed out`);
     const viewport=await call('Runtime.evaluate',{expression:'JSON.stringify({width:innerWidth,client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth})',returnByValue:true},sessionId);
-    console.log(name, JSON.stringify(report), 'viewport',viewport.result.value);
+    console.log(name, `${report.passed} behavior checks passed`, 'viewport',viewport.result.value);
     if(report.failed)throw new Error(`${name}: ${report.failed}`);
     await call('Runtime.evaluate',{expression:'document.getElementById("test-report").remove(); window.scrollTo(0,0)',returnByValue:true},sessionId);
+    const audit = await call('Runtime.evaluate',{expression:'runColorAudit()',awaitPromise:true,returnByValue:true},sessionId);
+    fs.writeFileSync(path.join(__dirname,`${name}-color-audit.json`),JSON.stringify(audit.result.value,null,2));
+    const colorReport = audit.result.value;
+    if (!colorReport || colorReport.failures.length) throw new Error(`${name}: ${colorReport?.failures.length ?? 'unknown'} color contrast failures (see audit JSON)`);
+    console.log(name, Object.values(colorReport.totals).reduce((n,total)=>n+total,0), 'contrast checks across',Object.keys(colorReport.totals).length,'views/states passed');
     await sleep(200);
     const {data}=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},sessionId);
     fs.writeFileSync(path.join(__dirname,`${name}.png`),Buffer.from(data,'base64'));
-    for (const theme of ['light','dark']) {
-      await call('Runtime.evaluate',{expression:`switchPage('logger'); applyTheme('${theme}'); window.scrollTo(0,0);`,returnByValue:true},sessionId);
+    for (const theme of ['light','dark']) for (const page of ['logger','dashboard','files','calendar','tasks']) {
+      await call('Runtime.evaluate',{expression:`switchPage('${page}'); applyTheme('${theme}'); window.scrollTo(0,0);`,returnByValue:true},sessionId);
       await sleep(250);
       const shot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},sessionId);
-      fs.writeFileSync(path.join(__dirname,`${name}-logger-${theme}.png`),Buffer.from(shot.data,'base64'));
+      fs.writeFileSync(path.join(__dirname,`${name}-${page}-${theme}.png`),Buffer.from(shot.data,'base64'));
     }
     await call('Target.closeTarget',{targetId});
   }

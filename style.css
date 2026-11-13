@@ -2215,21 +2215,6 @@ aside.study-preview[hidden] { display: none; }
 @media(max-width:1000px) { .study-columns { grid-template-columns: 1fr; } }
 @media(max-width:760px) { .focus-hero { padding: 24px; gap: 12px; } .hero-total { display: none; } .recap-stats { grid-template-columns: 1fr; gap: 10px; } .recap-stats .card { padding: 16px; } .recap-stats strong { margin: 3px 0; font-size: 28px; } aside.study-preview { inset: 8px 8px calc(72px + env(safe-area-inset-bottom)); width: auto; border-radius: 16px; padding: 14px; } #preview-frame { min-height: 180px; } .module-grid { grid-template-columns: 1fr; } }
 
-/* Theme colors follow the system until an explicit preference is selected. */
-html[data-theme=dark] { color-scheme: dark; --apple-bg: #171622; --apple-card: #222131; --apple-card-elevated: #2a293d; --text-primary: #eeeaf9; --text-secondary: #b5afc8; --text-tertiary: #9690aa; --border-subtle: #ffffff12; --border-strong: #ffffff28; --apple-blue: #b2a2ff; --apple-blue-hover: #9a85f2; --apple-blue-tint: #ab94ff20; --card-shadow: 0 6px 26px #00000014; }
-html[data-theme=dark] body { background: radial-gradient(ellipse at 90% 0%, #2b2442, transparent 45%), var(--apple-bg); }
-html[data-theme=dark] :is(.card,.stat-card,.file-card,dialog,.select-menu,.gdrive-connected-card,.mobile-bottom-nav) { background: var(--apple-card); color: var(--text-primary); border-color: var(--border-strong); }
-html[data-theme=dark] :is(input,textarea,.select-trigger,.segment-btn,.chip,.semester-tab,.bar-track,.drop-zone) { background: #2c293f; color: var(--text-primary); border-color: #514965; }
-html[data-theme=dark] :is(.focus-hero,.quick-log-banner) { background: linear-gradient(125deg,#35294f,#213c38); border-color: #514066; }
-html[data-theme=dark] :is(.apple-btn-primary,.apple-btn-primary-sm,.apple-primary-btn) { background: #7960da; color: white; }
-html[data-theme=dark] :is(.apple-btn-secondary,.apple-btn-secondary-sm,.stepper-btn) { background: #343046; color: #e1d8f5; border-color: #514965; }
-html[data-theme=dark] :is(.select-option,.file-title,.subject-row-top strong,td,.quick-log-number) { color: var(--text-primary); }
-html[data-theme=dark] :is(.select-option:hover,.select-option:focus,.select-option[aria-selected=true],.upload-destination,.time-scrubber-card) { background: #353047; color: #e3d9ff; }
-html[data-theme=dark] :is(.segment-btn.active,.chip.active,.semester-tab.active) { background: #7960da; color: #fff; }
-html[data-theme=dark] .mobile-top-bar { background: #222131eb; }
-html[data-theme=dark] .countdown.urgent { background: #593625; color: #ffcb98; }
-html[data-theme=dark] :is(progress,.progress-bar-wrap) { background: #3a354d; }
-
 body > aside:not(.study-preview) { overflow-y: auto; gap: 20px; }
 body > aside:not(.study-preview) .sidebar-nav { margin-top: 8px; }
 body > aside:not(.study-preview) .aside-bottom { padding-top: 12px; }
