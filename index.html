@@ -13,6 +13,9 @@
   <!-- Google Identity Services for Direct Google Drive Sync -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="app.js" defer></script>
+  <script src="study.js" defer></script>
+  <script src="features.js" defer></script>
+  <script src="ui.js" defer></script>
 </head>
 <body>
   <!-- Mobile Top Bar (Apple Frosted Glass) -->
@@ -22,6 +25,7 @@
       <button id="mobile-cloud-btn" class="apple-btn-secondary-sm" title="Google Drive Cloud Sync">
         <span id="mobile-cloud-dot" class="dot"></span> <span id="mobile-cloud-label">Drive</span>
       </button>
+      <button id="mobile-theme-btn" class="apple-btn-secondary-sm" aria-label="Cycle appearance: system, light, dark">&#9680;</button>
       <button id="mobile-history-btn" class="apple-btn-secondary-sm" title="Session History">≡ History</button>
     </div>
   </header>
@@ -32,6 +36,9 @@
     <p class="tagline">Cloud study dashboard.</p>
     
     <nav class="sidebar-nav">
+      <a href="#today" class="nav-item" data-page="today"><span class="sf-icon">&#9728;</span> Today</a>
+      <a href="#modules" class="nav-item" data-page="modules"><span class="sf-icon">&#9638;</span> Modules</a>
+      <a href="#recap" class="nav-item" data-page="recap"><span class="sf-icon">&#8599;</span> Weekly recap</a>
       <a href="#dashboard" class="nav-item active" data-page="dashboard"><span class="sf-icon">◫</span> Overview</a>
       <a href="#logger" class="nav-item" data-page="logger"><span class="sf-icon">⏱</span> Log Time</a>
       <a href="#calendar" class="nav-item" data-page="calendar"><span class="sf-icon">📅</span> Calendar</a>
@@ -42,6 +49,8 @@
 
     <!-- Google Drive Cloud Card (Replaces local storage controls) -->
     <div class="aside-bottom">
+      <label class="theme-label" for="theme-choice">Appearance</label>
+      <select id="theme-choice" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
       <div id="sidebar-cloud-card" class="sidebar-cloud-card">
         <div class="cloud-card-header">
           <div class="cloud-title-group">
@@ -64,6 +73,11 @@
 
   <!-- Main Content Area with Distinct Pages -->
   <main>
+    <div class="utility-bar"><button class="apple-btn-secondary" data-open-search>&#8981; Search everything <kbd>Ctrl K</kbd></button><span id="sync-summary" role="status"></span><button class="quiet-btn" id="sync-retry">Sync now</button></div>
+    <section class="page-view" id="view-today"></section>
+    <section class="page-view" id="view-modules"></section>
+    <section class="page-view" id="view-module"></section>
+    <section class="page-view" id="view-recap"></section>
 
     <!-- ========================================================
          PAGE 1: OVERVIEW / DASHBOARD (#view-dashboard)
@@ -466,9 +480,9 @@
 
   <!-- Mobile Bottom Navigation (iOS Tab Bar style) -->
   <nav class="mobile-bottom-nav" aria-label="Mobile Navigation">
-    <a href="#dashboard" class="mobile-nav-item active" data-page="dashboard">
+    <a href="#today" class="mobile-nav-item active" data-page="today">
       <span class="mobile-nav-icon">◫</span>
-      <span class="mobile-nav-label">Overview</span>
+      <span class="mobile-nav-label">Today</span>
     </a>
     <a href="#logger" class="mobile-nav-item" data-page="logger">
       <span class="mobile-nav-icon">⏱</span>
@@ -492,14 +506,14 @@
   <dialog id="upload-modal">
     <form id="upload-form">
       <h2>Upload to Google Drive</h2>
-      <p class="section-subtitle">File will upload straight to your "STUD - Course Files" folder.</p>
+      <p class="section-subtitle">Organized automatically by semester, module, and document category.</p>
       
       <div class="form-group" style="margin-top:16px">
         <label class="apple-label">CHOOSE FILE</label>
-        <div class="drop-zone" id="file-drop-zone">
+        <div class="drop-zone" id="file-drop-zone" role="button" tabindex="0" aria-label="Choose a file to upload">
           <span class="drop-icon">☁️</span>
           <span id="drop-zone-text">Click to choose or drag & drop a file</span>
-          <input type="file" id="upload-file-input" required hidden>
+          <input type="file" id="upload-file-input" hidden>
         </div>
       </div>
 
@@ -524,6 +538,7 @@
         <input type="text" id="upload-name" class="apple-input" placeholder="e.g. Chapitre 2 - Merise & MCD">
       </div>
 
+      <p id="upload-destination" class="upload-destination" aria-live="polite"></p>
       <div class="dialog-actions">
         <button type="button" class="apple-btn-secondary" id="upload-cancel">Cancel</button>
         <button type="submit" class="apple-btn-primary" id="btn-submit-upload">Upload to Google Drive</button>
@@ -540,6 +555,7 @@
       </div>
       <p class="section-subtitle">STUD automatically keeps your study time, tasks, and files synchronized with your personal Google Drive.</p>
       
+      <p id="sync-details" class="muted" aria-live="polite"></p>
       <div id="gdrive-auth-view" style="margin-top:16px">
         <!-- Disconnected View: Enter Client ID & Sign In -->
         <div id="gdrive-disconnected-box">
@@ -609,5 +625,18 @@
 
   <!-- Apple Toast Notification -->
   <div id="toast" role="status"></div>
+<aside id="study-preview" class="study-preview" aria-label="Document preview" hidden>
+    <header><div><strong id="preview-title"></strong><p id="preview-module" class="muted"></p></div><button id="preview-close" class="apple-btn-secondary" aria-label="Close preview">&#10005;</button></header>
+    <div id="preview-context"></div>
+    <a id="preview-external" class="apple-link-btn" target="_blank" rel="noopener">Open in Drive &#8599;</a>
+    <p class="preview-hint">If the preview needs permission, open in Drive and sign in.</p>
+    <iframe id="preview-frame" title="Course document preview" allow="fullscreen"></iframe>
+  </aside>
+<dialog id="search-dialog" aria-labelledby="search-title">
+    <header class="search-heading"><h2 id="search-title">Search STUD</h2><button type="button" class="quiet-btn" id="search-close">Close</button></header>
+    <label for="global-search" class="apple-label">MODULES, FILES, TASKS, EXAMS & SESSION NOTES</label>
+    <input id="global-search" class="apple-input" type="search" placeholder="Search your study space?" autocomplete="off">
+    <div id="search-results" aria-live="polite"></div>
+  </dialog>
 </body>
 </html>

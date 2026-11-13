@@ -1,0 +1,6 @@
+/tests/chrome-profile/
+/tests/cdp-profile/
+/tests/browser-smoke.html
+/tests/browser*-result.html
+/tests/chrome*-stderr.log
+/tests/*.png

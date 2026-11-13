@@ -25,6 +25,8 @@ const fresh = () => ({
   subjects: JSON.parse(JSON.stringify(defaultSubjects)),
   sessions: [],
   tasks: [],
+  exams: [],
+  moduleGoals: {},
   files: [],
   goal: 600,
   updatedAt: Date.now()
@@ -64,6 +66,8 @@ function migrateState(s) {
 
   if (!Array.isArray(s.sessions)) s.sessions = [];
   if (!Array.isArray(s.tasks)) s.tasks = [];
+  if (!Array.isArray(s.exams)) s.exams = [];
+  if (!s.moduleGoals || typeof s.moduleGoals !== "object" || Array.isArray(s.moduleGoals)) s.moduleGoals = {};
   if (!Array.isArray(s.files)) s.files = [];
   if (!Number.isFinite(s.goal) || s.goal <= 0) s.goal = 600;
   if (!Number.isFinite(s.updatedAt)) s.updatedAt = Date.now();
@@ -90,6 +94,7 @@ const duration = m => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` 
 function toast(message) {
   const el = $('toast');
   if (!el) return;
+  (document.querySelector('dialog[open]') || document.body).append(el);
   el.textContent = message;
   el.style.display = 'block';
   clearTimeout(toast.timeout);
@@ -192,7 +197,7 @@ function recordSession(subject, m, date, note) {
 /* ============================================================
    DISTINCT PAGE ROUTER (SPA VIEWS)
 ============================================================ */
-const VALID_PAGES = ['dashboard', 'logger', 'calendar', 'files', 'tasks', 'history'];
+const VALID_PAGES = ['today', 'modules', 'module', 'recap', 'dashboard', 'logger', 'calendar', 'files', 'tasks', 'history'];
 
 function switchPage(pageId, updateHash = true) {
   if (!VALID_PAGES.includes(pageId)) pageId = 'dashboard';
@@ -218,6 +223,7 @@ function switchPage(pageId, updateHash = true) {
 window.addEventListener('hashchange', () => {
   const hash = window.location.hash.replace('#', '');
   switchPage(hash, false);
+  document.dispatchEvent(new Event('stud:render'));
 });
 
 document.addEventListener('click', e => {
@@ -227,6 +233,7 @@ document.addEventListener('click', e => {
   if (VALID_PAGES.includes(targetPage)) {
     e.preventDefault();
     switchPage(targetPage, true);
+    document.dispatchEvent(new Event('stud:render'));
   }
 });
 
@@ -303,7 +310,7 @@ function requestGoogleDriveToken() {
         gdriveAccessToken = resp.access_token;
         localStorage.setItem(GDRIVE_TOKEN_KEY, gdriveAccessToken);
         localStorage.setItem(GDRIVE_EXP_KEY, Date.now() + (Number(resp.expires_in || 3599) * 1000));
-        updateGoogleDriveUI('synced');
+        updateGoogleDriveUI('syncing');
         toast('✓ Connected to Google Drive!');
         $('gdrive-modal')?.close();
         try {
@@ -321,53 +328,46 @@ function requestGoogleDriveToken() {
   }
 }
 
-async function getOrCreateStudFolder() {
-  if (!gdriveAccessToken) throw new Error('Not connected to Google Drive');
-  let folderId = localStorage.getItem(GDRIVE_FOLDER_ID_KEY);
-  if (folderId) return folderId;
-
-  const q = "name = 'STUD - Course Files' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
-  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
-    headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }
-  });
-
-  if (searchRes.status === 401) {
-    handleExpiredToken();
-    throw new Error('Google Drive session expired. Please reconnect.');
+async function driveRequest(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: { Authorization: 'Bearer ' + gdriveAccessToken, ...options.headers } });
+  if (response.status === 401) handleExpiredToken();
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error?.message || `Google Drive request failed (${response.status})`);
   }
-
-  const searchData = await searchRes.json();
-  if (searchData.files && searchData.files.length > 0) {
-    folderId = searchData.files[0].id;
-    localStorage.setItem(GDRIVE_FOLDER_ID_KEY, folderId);
-    return folderId;
-  }
-
-  const createRes = await fetch('https://www.googleapis.com/drive/v3/files?fields=id,name', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + gdriveAccessToken,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      name: 'STUD - Course Files',
-      mimeType: 'application/vnd.google-apps.folder'
-    })
-  });
-
-  if (createRes.status === 401) {
-    handleExpiredToken();
-    throw new Error('Google Drive session expired. Please reconnect.');
-  }
-
-  const folderData = await createRes.json();
-  folderId = folderData.id;
-  localStorage.setItem(GDRIVE_FOLDER_ID_KEY, folderId);
-  return folderId;
+  return response.status === 204 ? null : response.json();
 }
 
-async function uploadFileToGoogleDrive(file, customTitle) {
-  const folderId = await getOrCreateStudFolder();
+const driveQueryValue = value => String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+const categoryFolders = { cours: 'Cours', tp: 'TP', td: 'TD', examen: 'Examens', autre: 'Resources' };
+async function findOrCreateDriveFolder(name, parentId = 'root') {
+  const q = `name = '${driveQueryValue(name)}' and '${driveQueryValue(parentId)}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const data = await driveRequest(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`);
+  if (data.files?.length) return data.files[0].id;
+  const folder = await driveRequest('https://www.googleapis.com/drive/v3/files?fields=id', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] })
+  });
+  return folder.id;
+}
+async function getOrCreateStudFolder() {
+  const id = await findOrCreateDriveFolder('STUD - Course Files');
+  localStorage.setItem(GDRIVE_FOLDER_ID_KEY, id);
+  return id;
+}
+async function getUploadFolder(subjectId, category) {
+  const subject = subjectObj(subjectId);
+  if (!subject) throw new Error('Choose a module before uploading.');
+  let id = await getOrCreateStudFolder();
+  id = await findOrCreateDriveFolder(semesterName(subject.semesterId), id);
+  id = await findOrCreateDriveFolder(subject.name, id);
+  return findOrCreateDriveFolder(categoryFolders[category] || 'Resources', id);
+}
+
+async function uploadFileToGoogleDrive(file, customTitle, subjectId, category) {
+  const folderId = await getUploadFolder(subjectId, category);
+  const extension = file.name.match(/\.[^/.]+$/)?.[0] || "";
+  if (extension && !customTitle.toLowerCase().endsWith(extension.toLowerCase())) customTitle += extension;
   const metadata = {
     name: customTitle || file.name,
     mimeType: file.type || 'application/octet-stream',
@@ -398,15 +398,8 @@ async function uploadFileToGoogleDrive(file, customTitle) {
 }
 
 async function deleteFileFromGoogleDrive(fileId) {
-  if (!isGoogleDriveConnected() || !fileId) return;
-  try {
-    await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }
-    });
-  } catch (err) {
-    console.warn('Drive file deletion error:', err);
-  }
+  if (!isGoogleDriveConnected()) throw new Error('Connect Google Drive before deleting a cloud file.');
+  await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
 }
 
 async function backupStudyDataToGoogleDrive(silent = false) {
@@ -431,6 +424,7 @@ async function backupStudyDataToGoogleDrive(silent = false) {
       throw new Error('Session expired. Please reconnect.');
     }
 
+    if (!searchRes.ok) throw new Error('Could not read Google Drive backup. Please try again.');
     const searchData = await searchRes.json();
     const existingFile = searchData.files && searchData.files[0];
 
@@ -439,6 +433,8 @@ async function backupStudyDataToGoogleDrive(silent = false) {
       subjects: state.subjects,
       sessions: state.sessions,
       tasks: state.tasks,
+      exams: state.exams,
+      moduleGoals: state.moduleGoals,
       files: state.files,
       goal: state.goal,
       updatedAt: state.updatedAt || Date.now()
@@ -447,7 +443,7 @@ async function backupStudyDataToGoogleDrive(silent = false) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
 
     if (existingFile) {
-      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existingFile.id}?uploadType=media`, {
+      await driveRequest(`https://www.googleapis.com/upload/drive/v3/files/${existingFile.id}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Authorization': 'Bearer ' + gdriveAccessToken },
         body: blob
@@ -456,12 +452,13 @@ async function backupStudyDataToGoogleDrive(silent = false) {
       const form = new FormData();
       form.append('metadata', new Blob([JSON.stringify({ name: fileName, parents: [folderId] })], { type: 'application/json' }));
       form.append('file', blob);
-      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      await driveRequest('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + gdriveAccessToken },
         body: form
       });
     }
+    localStorage.setItem('stud-last-sync', String(Date.now()));
     updateGoogleDriveUI('synced');
     if (!silent) toast('✓ Study data backed up to Google Drive!');
   } catch (err) {
@@ -494,6 +491,7 @@ async function syncWithGoogleDrive(silent = false) {
       throw new Error('Session expired. Please reconnect.');
     }
 
+    if (!searchRes.ok) throw new Error('Could not read Google Drive backup. Please try again.');
     const searchData = await searchRes.json();
     const existingFile = searchData.files && searchData.files[0];
 
@@ -508,23 +506,24 @@ async function syncWithGoogleDrive(silent = false) {
     const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
       headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }
     });
+    if (!downloadRes.ok) throw new Error('Could not download cloud backup.');
     const remoteData = await downloadRes.json();
 
     if (!validBackup(remoteData)) {
       console.warn('Invalid remote data structure; keeping local.');
-      updateGoogleDriveUI('synced');
-      return;
+      throw new Error('Cloud backup is invalid. Local data has been preserved.');
     }
 
     const localUpdated = Number(state.updatedAt || 0);
     const remoteUpdated = Number(remoteData.updatedAt || 0);
 
-    const localEmpty = (!state.sessions || state.sessions.length === 0) && (!state.tasks || state.tasks.length === 0) && (!state.files || state.files.length === 0);
-    const remoteHasData = (remoteData.sessions && remoteData.sessions.length > 0) || (remoteData.tasks && remoteData.tasks.length > 0) || (remoteData.files && remoteData.files.length > 0);
+    const localEmpty = (!state.sessions || state.sessions.length === 0) && (!state.tasks || state.tasks.length === 0) && (!state.files || state.files.length === 0) && (!state.exams || state.exams.length === 0) && Object.keys(state.moduleGoals).length === 0;
+    const remoteHasData = (remoteData.sessions && remoteData.sessions.length > 0) || (remoteData.tasks && remoteData.tasks.length > 0) || (remoteData.files && remoteData.files.length > 0) || (remoteData.exams && remoteData.exams.length > 0);
 
     if (remoteUpdated > localUpdated || (localEmpty && remoteHasData)) {
       state = migrateState({ ...remoteData, timer: null });
       localStorage.setItem(KEY, JSON.stringify(state));
+      localStorage.setItem('stud-last-sync', String(Date.now()));
       render();
       renderFiles();
       renderDashboardFilesPreview();
@@ -535,6 +534,7 @@ async function syncWithGoogleDrive(silent = false) {
       updateGoogleDriveUI('synced');
       if (!silent) toast('✓ Google Drive synced with latest local changes!');
     } else {
+      localStorage.setItem('stud-last-sync', String(Date.now()));
       updateGoogleDriveUI('synced');
       if (!silent) toast('✓ Everything is up to date.');
     }
@@ -569,12 +569,14 @@ function openGoogleDriveModal() {
   const clientIdInput = $('gdrive-client-id-input');
   if (clientIdInput) clientIdInput.value = getGoogleClientId();
   updateGoogleDriveUI();
-  modalEl.showModal();
+  if (!modalEl.open) modalEl.showModal();
 }
 
 function updateGoogleDriveUI(syncState = null) {
   const connected = isGoogleDriveConnected();
-  const effectiveState = connected ? (syncState || 'synced') : 'disconnected';
+  if (syncState) localStorage.setItem('stud-sync-state', syncState);
+  const effectiveState = connected ? (syncState || localStorage.getItem('stud-sync-state') || 'pending') : 'disconnected';
+  document.dispatchEvent(new CustomEvent('stud:sync', { detail: effectiveState }));
 
   // 1. Sidebar Cloud Card
   const syncStatusEl = $('cloud-sync-status');
@@ -587,9 +589,11 @@ function updateGoogleDriveUI(syncState = null) {
     } else if (effectiveState === 'syncing') {
       syncStatusEl.innerHTML = '<span class="sync-dot syncing"></span> Syncing...';
     } else if (effectiveState === 'error') {
-      syncStatusEl.innerHTML = '<span class="sync-dot disconnected"></span> Re-auth needed';
-    } else {
+      syncStatusEl.innerHTML = '<span class="sync-dot disconnected"></span> Sync failed - Retry';
+    } else if (effectiveState === 'synced') {
       syncStatusEl.innerHTML = '<span class="sync-dot synced"></span> Synced';
+    } else {
+      syncStatusEl.textContent = 'Waiting to sync';
     }
   }
 
@@ -620,10 +624,10 @@ function updateGoogleDriveUI(syncState = null) {
   const mobileDot = $('mobile-cloud-dot');
   const mobileLabel = $('mobile-cloud-label');
   if (mobileDot) {
-    mobileDot.className = 'dot ' + (connected ? (effectiveState === 'syncing' ? 'syncing' : 'synced') : 'disconnected');
+    mobileDot.className = 'dot ' + (connected ? (effectiveState === 'syncing' ? 'syncing' : effectiveState === 'synced' ? 'synced' : 'disconnected') : 'disconnected');
   }
   if (mobileLabel) {
-    mobileLabel.textContent = connected ? (effectiveState === 'syncing' ? 'Syncing...' : 'Drive') : 'Connect';
+    mobileLabel.textContent = connected ? (effectiveState === 'syncing' ? 'Syncing...' : effectiveState === 'error' ? 'Retry sync' : 'Drive') : 'Connect';
   }
 
   // 3. Modal Views
@@ -706,7 +710,7 @@ function cleanupLegacyIndexedDB() {
 }
 
 async function initCloudSync() {
-  cleanupLegacyIndexedDB();
+  // Preserve legacy local files; never delete a user database during startup.
   updateGoogleDriveUI();
   if (isGoogleDriveConnected()) {
     try {
@@ -737,6 +741,7 @@ function getFileIcon(type, name) {
 }
 
 function renderFiles() {
+  queueMicrotask(() => document.dispatchEvent(new Event('stud:render')));
   const grid = $('files-grid');
   if (!grid) return;
 
@@ -758,7 +763,7 @@ function renderFiles() {
     grid.innerHTML = `
       <div class="empty" style="grid-column: 1 / -1; padding: 48px 16px;">
         <span style="font-size:36px;display:block;margin-bottom:8px">☁️</span>
-        <strong>No documents in your Cloud Vault.</strong><br>
+        <strong>${filesList.length ? 'No matching documents.' : 'Your next idea belongs here.'}</strong><br>
         Store your Cours, TP code, TD exercises, or past exams directly in your Google Drive.
         <br><button class="apple-btn-primary" id="btn-empty-upload" style="margin-top:14px">+ Upload to Google Drive</button>
       </div>
@@ -834,11 +839,12 @@ function openUploadModal() {
     subSelect.innerHTML = renderSubjectOptions(state.subjects[0]?.id);
   }
   pendingUploadFile = null;
+  if ($('upload-file-input')) $('upload-file-input').value = "";
   const dropText = $('drop-zone-text');
   if (dropText) dropText.textContent = 'Click to choose or drag & drop a file';
   if ($('upload-name')) $('upload-name').value = '';
 
-  modalEl.showModal();
+  if (!modalEl.open) modalEl.showModal();
 }
 
 function copyToClipboard(text) {
@@ -913,7 +919,7 @@ function setupFileVaultUI() {
       try {
         toast('Uploading file directly to Google Drive...');
         const customTitle = $('upload-name')?.value.trim() || pendingUploadFile.name;
-        const driveData = await uploadFileToGoogleDrive(pendingUploadFile, customTitle);
+        const driveData = await uploadFileToGoogleDrive(pendingUploadFile, customTitle, $('upload-subject').value, $('upload-category').value);
 
         const record = {
           id: uid(),
@@ -984,8 +990,10 @@ function setupFileVaultUI() {
       const file = filesList.find(f => f.id === b.dataset.previewFile);
       if (!file) return;
       const url = file.gdrive?.webViewLink || (file.gdrive?.fileId ? `https://drive.google.com/file/d/${file.gdrive.fileId}/view` : null);
-      if (url) {
-        window.open(url, '_blank');
+      if (url && typeof openStudyPreview === 'function') {
+        openStudyPreview(file);
+      } else if (url) {
+        window.open(url, '_blank', 'noopener');
       } else {
         toast('File view link unavailable.');
       }
@@ -1034,8 +1042,10 @@ function setupFileVaultUI() {
       const file = filesList.find(f => f.id === b.dataset.deleteFile);
       if (!file) return;
       if (confirm(`Delete "${file.customTitle || file.name}" from your Google Drive?`)) {
-        if (file.gdrive?.fileId && isGoogleDriveConnected()) {
-          deleteFileFromGoogleDrive(file.gdrive.fileId).catch(err => console.warn('Drive deletion:', err));
+        if (file.gdrive?.fileId) {
+          b.disabled = true;
+          try { await deleteFileFromGoogleDrive(file.gdrive.fileId); }
+          catch (err) { toast(err.message); b.disabled = false; return; }
         }
         state.files = filesList.filter(f => f.id !== file.id);
         save();
@@ -1153,6 +1163,7 @@ function renderCalendar() {
     const daySessions = state.sessions.filter(s => s.date === cellDateStr);
     const dayMins = minutes(daySessions);
     const dayTasks = state.tasks.filter(t => t.due === cellDateStr);
+    const dayExams = state.exams.filter(e => e.date === cellDateStr);
 
     if (!isOtherMonth && dayMins > 0) {
       daysStudiedInMonth++;
@@ -1167,6 +1178,7 @@ function renderCalendar() {
         <span class="cal-day-number">${cellDayNumber}</span>
         <div class="cal-day-badges">
           ${dayMins > 0 ? `<span class="cal-study-pill" title="${duration(dayMins)} studied">${duration(dayMins)}</span>` : ''}
+          ${dayExams.length ? `<span class="cal-exam-pill" title="${esc(dayExams.map(e => e.title).join(", "))}">${dayExams.length} exam${dayExams.length === 1 ? "" : "s"}</span>` : ""}
           ${dayTasks.length > 0 ? `<span class="cal-task-pill" title="${dayTasks.length} task(s) due">${dayTasks.length} due</span>` : ''}
         </div>
       </div>
@@ -1234,6 +1246,8 @@ function renderDayInspector(dateStr) {
     `).join('') : '<p class="muted" style="font-size:12px;margin:4px 0">No tasks due on this date.</p>'}
   </div>`;
 
+  const exams = state.exams.filter(exam => exam.date === dateStr);
+  html += `<div class="inspector-section"><h4>Exams (${exams.length})</h4>${exams.map(exam => `<div class="inspector-item"><div><strong>${esc(exam.title)}</strong><small class="muted"> ? ${esc(subjectName(exam.subjectId))}</small></div><button class="quiet-btn" data-edit-exam="${esc(exam.id)}">Edit</button></div>`).join('') || '<p class="muted">No exams on this date.</p>'}</div>`;
   content.innerHTML = html;
 }
 
@@ -1438,6 +1452,7 @@ function renderTasksList() {
           ${t.due ? `${t.due < today && !t.done ? 'Overdue · ' : ''}Due ${esc(new Date(t.due + 'T12:00:00').toLocaleDateString())}` : 'No due date'}
         </small>
       </label>
+      <button class="quiet-btn" data-edit-task="${esc(t.id)}">Edit</button>
       <button class="delete" data-task-delete="${esc(t.id)}" aria-label="Delete task">×</button>
     </div>
   `).join('');
@@ -1484,7 +1499,7 @@ function renderHistoryTable() {
       </td>
       <td>${esc(new Date(s.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}</td>
       <td><strong>${duration(s.minutes)}</strong></td>
-      <td><button class="delete" data-session-delete="${esc(s.id)}" aria-label="Delete session">×</button></td>
+      <td><button class="quiet-btn" data-edit-session="${esc(s.id)}">Edit</button><button class="delete" data-session-delete="${esc(s.id)}" aria-label="Delete session">×</button></td>
     </tr>
   `).join('');
 }
@@ -1493,6 +1508,7 @@ function renderHistoryTable() {
    RENDER PIPELINE (GLOBAL)
 ============================================================ */
 function render() {
+  queueMicrotask(() => document.dispatchEvent(new Event('stud:render')));
   const today = day(new Date()), days = weekDays(), weekTotal = minutes(state.sessions.filter(s => days.some(d => day(d) === s.date)));
   const todayTotal = minutes(state.sessions.filter(s => s.date === today));
 
@@ -1746,13 +1762,15 @@ function validBackup(d) {
     d.subjects.every(s => typeof s.id === 'string' && typeof s.name === 'string') &&
     Number.isFinite(d.goal) && d.goal > 0 &&
     Array.isArray(d.tasks) && d.tasks.every(t => typeof t.id === 'string' && typeof t.title === 'string' && typeof t.done === 'boolean' && (!t.due || validDate(t.due))) &&
-    Array.isArray(d.sessions) && d.sessions.every(s => typeof s.id === 'string' && d.subjects.some(x => x.id === s.subject) && Number.isInteger(s.minutes) && s.minutes > 0 && s.minutes <= 1440 && validDate(s.date)) &&
+    Array.isArray(d.sessions) && d.sessions.every(s => typeof s.id === 'string' && typeof s.subject === 'string' && Number.isInteger(s.minutes) && s.minutes > 0 && s.minutes <= 1440 && validDate(s.date)) &&
     (!d.semesters || (Array.isArray(d.semesters) && d.semesters.every(sem => typeof sem.id === 'string' && typeof sem.name === 'string'))) &&
-    (!d.files || Array.isArray(d.files));
+    (!d.files || Array.isArray(d.files)) &&
+    (!d.moduleGoals || (typeof d.moduleGoals === 'object' && !Array.isArray(d.moduleGoals) && Object.values(d.moduleGoals).every(value => Number.isInteger(value) && value >= 0 && value <= 10080))) &&
+    (!d.exams || (Array.isArray(d.exams) && d.exams.every(e => typeof e.id === 'string' && typeof e.title === 'string' && typeof e.subjectId === 'string' && validDate(e.date))));
 }
 
 function validDate(s) {
-  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s + 'T12:00:00').getTime());
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s + 'T12:00:00').getTime()) && day(new Date(s + 'T12:00:00')) === s;
 }
 
 const mobileHistoryBtn = $('mobile-history-btn');
@@ -1857,4 +1875,4 @@ renderDashboardFilesPreview();
 initCloudSync();
 
 const initialHash = window.location.hash.replace('#', '');
-switchPage(initialHash || 'dashboard', false);
+switchPage(initialHash || 'today', false);
